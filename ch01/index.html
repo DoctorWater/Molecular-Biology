@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Как доказали, что гены — это ДНК — ДНК и её копирование</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d2b27'/%3E%3Ctext x='32' y='45' text-anchor='middle' font-size='48' fill='%23f0b45a'%3E∞%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<script src="../lib/engine.js"></script>
+<script src="../lib/bio.js"></script>
+<script src="audio/ru/timings.js"></script>
+<script>
+'use strict';
+const CHAPTER = { number: 1, title: 'Как доказали, что гены — это ДНК', minutes: 10, language: 'ru' };
+
+/* ---------- chapter drawing helpers (shared ones: lib/bio.js) ---------- */
+const STRAIN = { S: COL.nat, R: COL.whole };
+// Arrowhead at (x, y) pointing along ang (radians).
+function arrowHead(p, x, y, ang, color, t0) {
+  const g = G(p, { x, y, r: ang * 180 / Math.PI, o: 0 });
+  mk('path', { d: 'M0 0L-24 -12L-24 12Z', fill: color }, g);
+  show(g, t0, .2);
+  return g;
+}
+// A curved arrow drawn on at t0; (ex, ey) is the end, (cx, cy) the last control point (sets the head's angle).
+function curveArrow(p, d, ex, ey, cx, cy, color, t0, dur = .8) {
+  draw(path(p, d, { stroke: color, 'stroke-width': 5, fill: 'none' }, { d: 0 }), t0, dur);
+  return arrowHead(p, ex, ey, Math.atan2(ey - cy, ex - cx), color, t0 + dur - .15);
+}
+// A molecule class box: ДНК, РНК, белок.
+function node(p, str, color, x, y, t0, w = 230) {
+  const g = G(p, { x, y, o: 0 });
+  mk('rect', { x: -w / 2, y: -46, width: w, height: 92, rx: 22, fill: mix(COL.board, color, .22), stroke: color, 'stroke-width': 3 }, g);
+  T(g, str, { y: 16, size: 46, fill: color, weight: 700, anchor: 'middle' });
+  show(g, t0);
+  return g;
+}
+// A pneumococcus cell: body, plus a capsule ring for S. dead — heat-killed (grey, crossed). cap: 'hidden' adds an
+// invisible capsule to an R cell so it can be transformed later (.body, .cap).
+function bact(p, kind, x, y, t0, { s = 1, dead = false, cap } = {}) {
+  const g = G(p, { x, y, s, o: 0 }), c = dead ? COL.dim : STRAIN[kind];
+  if (kind === 'S' || cap) {
+    g.cap = mk('ellipse', { rx: 54, ry: 36, fill: 'none', stroke: dead ? COL.dim : STRAIN.S, 'stroke-width': 3, 'stroke-dasharray': dead ? '7 6' : 'none' }, g);
+    if (cap === 'hidden') put(g.cap, { o: 0 });
+  }
+  g.body = mk('ellipse', { rx: 38, ry: 22, fill: mix(COL.board, c, .35), stroke: c, 'stroke-width': 3 }, g);
+  if (dead) path(g, 'M-10 -10L10 10M10 -10L-10 10', { stroke: c, 'stroke-width': 3 });
+  if (t0 != null) show(g, t0);
+  return g;
+}
+// A mouse facing right, centred on its body.
+function mouse(p, x, y, t0, s = 1) {
+  const g = G(p, { x, y, s, o: 0 }), line = { stroke: COL.chalk, 'stroke-width': 3 };
+  path(g, 'M-46 4C-80 10 -86 -24 -112 -14', { ...line, fill: 'none' });
+  mk('ellipse', { rx: 46, ry: 26, fill: CARD, ...line }, g);
+  mk('circle', { cx: 40, cy: -30, r: 10, fill: CARD, ...line }, g);
+  mk('circle', { cx: 52, cy: -10, r: 18, fill: CARD, ...line }, g);
+  mk('circle', { cx: 58, cy: -14, r: 2.6, fill: COL.chalk }, g);
+  show(g, t0);
+  return g;
+}
+// Phage T2: protein head (hexagon) with a DNA coil inside, tail and fibres (.head, .dna). empty — a coat without DNA.
+function phage(p, x, y, t0, { s = 1, empty = false } = {}) {
+  const g = G(p, { x, y, s, o: 0 });
+  g.head = mk('path', { d: 'M0 -60L44 -35V15L0 40L-44 15V-35Z', fill: CARD, stroke: PROT, 'stroke-width': 4, 'stroke-linejoin': 'round' }, g);
+  if (!empty) g.dna = path(g, 'M-20 -30C10 -42 26 -16 0 -6S-30 14 0 22S26 4 18 -22', { stroke: DNA, 'stroke-width': 4, fill: 'none' });
+  mk('rect', { x: -9, y: 40, width: 18, height: 56, fill: CARD, stroke: PROT, 'stroke-width': 4 }, g);
+  path(g, 'M-9 96L-40 132M9 96L40 132M-4 96L-18 138M4 96L18 138', { stroke: PROT, 'stroke-width': 3.5 });
+  if (t0 != null) show(g, t0);
+  return g;
+}
+// A Petri dish; colonies of kind 'S' (big, salmon) or 'R' (small, blue) appear with .grow(t0).
+function dish(p, x, y, t0, kind) {
+  const g = G(p, { x, y, o: 0 });
+  mk('ellipse', { rx: 82, ry: 30, fill: CARD, stroke: COL.dim, 'stroke-width': 3 }, g);
+  const cs = [[-46, -6], [-18, 8], [10, -10], [40, 6], [-28, 13], [22, 14], [52, -9]].map(([cx, cy]) => {
+    const e = mk('circle', { cx, cy, r: kind === 'S' ? 9 : 6, fill: STRAIN[kind], 'fill-opacity': kind === 'S' ? .95 : .6 }, g);
+    put(e, { o: 0 });
+    return e;
+  });
+  if (t0 != null) show(g, t0);
+  g.grow = at => cs.forEach((e, i) => show(e, at + i * .07, .3));
+  return g;
+}
+// Status under a mouse: survived / died.
+const fate = (p, alive, x, y, t0) => {
+  yesNo(p, alive, x - 70, y - 8, t0);
+  return say(p, alive ? 'выжила' : 'погибла', x - 40, y, t0, { size: 28, fill: alive ? OK : NO, weight: 700, anchor: 'start' });
+};
+const strike = (p, x1, x2, y, t0) => draw(path(p, `M${x1} ${y}H${x2}`, { stroke: NO, 'stroke-width': 4 }, { d: 0 }), t0, .4);
+
+/* ---------- beats: [id, title, run(m, D), { ask }?] ---------- */
+const BEATS = [
+  ['intro', 'Как доказали, что гены — это ДНК', (m, D) => {
+    const g = G(scene, { o: 0, y: 24 });
+    T(g, 'Раздел 1 «Открытие и строение ДНК» · Глава 1', { x: 800, y: 330, size: 28, fill: COL.dim, anchor: 'middle' });
+    T(g, 'Как доказали, что гены — это ДНК', { x: 800, y: 440, size: 80, weight: 600, anchor: 'middle' });
+    tw(g, { o: 1, y: 0 }, .2, 1.1, out);
+    const r = say(scene, 'белок или ДНК: четыре опыта, 1869–1952', 800, 560, m('sub'), { size: 34, fill: COL.dim });
+    tw(g, { o: 0, y: -24 }, D - .9, .8); hide(r, D - .9, .8);
+  }],
+  ['doubt', 'Белок или ДНК', (m) => {
+    const p = panel(0);
+    say(p, '1940 год: где записана наследственность?', 800, 110, .2, { size: 36, weight: 600 });
+    const hues = [COL.nat, COL.whole, COL.int, COL.rat, COL.irr, COL.real, COL.task, COL.chalk];
+    const prot = G(p);
+    for (let i = 0; i < 20; i++) {
+      const b = mk('circle', { cx: 230 + i * 60, cy: 300 + (i % 2) * 24, r: 22, fill: hues[(i * 5) % 8], 'fill-opacity': .85 }, prot);
+      put(b, { o: 0 }); show(b, m('prot', i * .05), .3);
+    }
+    say(p, 'белок: 20 разных аминокислот', 800, 400, m('prot', .6), { size: 32, fill: PROT, weight: 700 });
+    const seq = 'ATGCGTACCTAGGATCCGTA', dna = G(p);
+    [...seq].forEach((b, i) => {
+      const g = G(dna, { x: 230 + i * 60, y: 540, o: 0 });
+      mk('circle', { r: 22, fill: BASE[b], 'fill-opacity': .85 }, g);
+      T(g, b, { y: 9, size: 24, fill: COL.board, weight: 700, anchor: 'middle' });
+      show(g, m('dna', i * .05), .3);
+    });
+    say(p, 'ДНК: всего 4 нуклеотида', 800, 640, m('dna', .6), { size: 32, fill: DNA, weight: 700 });
+    pulse(prot, m('tilt'), 1.06);
+    tw(dna, { o: .35 }, m('tilt', .3), .6);
+    say(p, '«сложную информацию несёт только сложная молекула»', 800, 720, m('tilt', .4), { size: 28, fill: COL.dim });
+    say(p, 'опровергли три опыта:', 470, 820, m('exp'), { size: 30, weight: 600 });
+    ['1928', '1944', '1952'].forEach((y, i) => pill(p, y, DNA, 760 + i * 170, 810, m('exp', .5 + i * .3), 32));
+  }],
+  ['dogma', 'Центральная догма', (m) => {
+    const p = panel(0), y = 470, xs = [330, 800, 1270];
+    say(p, 'молекулярная биология: как хранится, передаётся и используется генетическая информация', 800, 90, .2, { size: 27, fill: COL.dim });
+    node(p, 'ДНК', DNA, xs[0], y, m('dna'));
+    node(p, 'РНК', RNA, xs[1], y, m('rna'));
+    node(p, 'белок', PROT, xs[2], y, m('prot'));
+    // replication: a loop over DNA
+    curveArrow(p, `M${xs[0] - 50} ${y - 50}C${xs[0] - 110} ${y - 200} ${xs[0] + 110} ${y - 200} ${xs[0] + 50} ${y - 52}`, xs[0] + 50, y - 52, xs[0] + 110, y - 200, DNA, m('rep'));
+    say(p, 'репликация', xs[0], y - 200, m('rep', .4), { size: 30, fill: DNA, weight: 700 });
+    arrowTo(p, xs[0] + 125, y, xs[1] - 125, y, COL.chalk, m('tr'));
+    say(p, 'транскрипция', (xs[0] + xs[1]) / 2, y - 24, m('tr', .2), { size: 26, weight: 600 });
+    arrowTo(p, xs[1] + 125, y, xs[2] - 125, y, COL.chalk, m('tl'));
+    say(p, 'трансляция', (xs[1] + xs[2]) / 2, y - 24, m('tl', .2), { size: 26, weight: 600 });
+    // no way back from protein
+    curveArrow(p, `M${xs[2] - 40} ${y + 50}C${xs[2] - 90} ${y + 150} ${xs[1] + 90} ${y + 150} ${xs[1] + 50} ${y + 52}`, xs[1] + 50, y + 52, xs[1] + 90, y + 150, COL.faint, m('no'));
+    yesNo(p, false, (xs[1] + xs[2]) / 2, y + 128, m('no', .7), 1.6);
+    say(p, 'из белка обратно — нет', (xs[1] + xs[2]) / 2, y + 200, m('no', .9), { size: 26, fill: NO, weight: 600 });
+    // reverse transcription
+    curveArrow(p, `M${xs[1] - 50} ${y + 50}C${xs[1] - 110} ${y + 190} ${xs[0] + 110} ${y + 190} ${xs[0] + 50} ${y + 52}`, xs[0] + 50, y + 52, xs[0] + 110, y + 190, RNA, m('rt'));
+    say(p, 'обратная транскрипция', (xs[0] + xs[1]) / 2, y + 200, m('rt', .5), { size: 26, fill: RNA, weight: 700 });
+    say(p, 'ретровирусы; Темин и Балтимор, 1970', (xs[0] + xs[1]) / 2, y + 240, m('rt', 2.5), { size: 22, fill: COL.dim });
+    // RNA → RNA in RNA viruses
+    curveArrow(p, `M${xs[1] - 50} ${y - 50}C${xs[1] - 110} ${y - 200} ${xs[1] + 110} ${y - 200} ${xs[1] + 50} ${y - 52}`, xs[1] + 50, y - 52, xs[1] + 110, y - 200, RNA, m('rr'));
+    say(p, 'РНК → РНК у РНК-вирусов', xs[1], y - 200, m('rr', .4), { size: 26, fill: RNA, weight: 700 });
+    pill(p, 'эта книга', DNA, xs[0], y - 262, m('book'), 28);
+  }],
+  ['q1', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz(WIDE, [{
+    id: 'c-dogma', prompt: ['Какой это процесс?'],
+    build: grid(Q_DOGMA, [['rep', 'Репликация', DNA], ['tr', 'Транскрипция'], ['tl', 'Трансляция', PROT], ['rt', 'Обратная транскрипция', RNA]], { multi: false, text: true }),
+  }], done) }],
+  ['miescher', '1869: нуклеин Мишера', (m) => {
+    const p = panel(0), y = 380;
+    say(p, '1869', 150, 130, m('year'), { size: 56, fill: DNA, weight: 700, anchor: 'start' });
+    say(p, 'Фридрих Мишер', 320, 130, m('year', .3), { size: 34, weight: 600, anchor: 'start' });
+    // bandage with stains → white blood cell → nucleus extract
+    const band = G(p, { x: 260, y, o: 0 });
+    mk('rect', { x: -90, y: -50, width: 180, height: 100, rx: 10, fill: CARD, stroke: COL.chalk, 'stroke-width': 3 }, band);
+    path(band, 'M-90 -16H90M-90 16H90', { stroke: COL.faint, 'stroke-width': 2 });
+    [[-40, -4, 18], [20, 10, 14], [52, -14, 10]].forEach(([cx, cy, r]) => mk('circle', { cx, cy, r, fill: COL.int, 'fill-opacity': .5 }, band));
+    show(band, m('band'));
+    say(p, 'гнойные повязки', 260, y + 90, m('band', .2), { size: 24, fill: COL.dim });
+    arrowTo(p, 380, y, 480, y, COL.dim, m('nuc', -.4));
+    const cell = G(p, { x: 600, y, o: 0 });
+    mk('circle', { r: 80, fill: CARD, stroke: COL.chalk, 'stroke-width': 3 }, cell);
+    const nucl = mk('circle', { cx: 8, cy: -4, r: 36, fill: mix(COL.board, DNA, .35), stroke: DNA, 'stroke-width': 3 }, cell);
+    show(cell, m('nuc', -.2));
+    say(p, 'лейкоцит: ядро', 600, y + 120, m('nuc'), { size: 24, fill: COL.dim });
+    pulse(nucl, m('nuc', .6), 1.25);
+    arrowTo(p, 700, y, 820, y, COL.dim, m('nuc', .8));
+    const t = tube(p, 900, y - 130, m('nuc', 1.1), { w: 80, h: 240 });
+    t.fill(150, 240, DNA, m('nuc', 1.4));
+    say(p, '«нуклеин»', 900, y + 160, m('nuc', 1.6), { size: 32, fill: DNA, weight: 700 });
+    // elements
+    ['C', 'H', 'O', 'N'].forEach((el, i) => pill(p, el, COL.chalk, 1100 + i * 90, y - 40, m('el', i * .35), 34));
+    const P = pill(p, 'P', DNA, 1190, y + 70, m('p'), 64);
+    pulse(P, m('p', .5), 1.3);
+    say(p, 'много фосфора', 1350, y + 85, m('p', .4), { size: 30, fill: DNA, weight: 700, anchor: 'start' });
+    pill(p, 'не белок', NO, 1240, y + 200, m('notp'), 32);
+    say(p, 'первым выделил ДНК, но не знал, зачем она нужна', 800, 720, m('later'), { size: 28, weight: 600 });
+    say(p, 'к 1930-м годам: «слишком простая молекула, опора ядра»', 800, 780, m('later', 3.5), { size: 26, fill: COL.dim });
+  }],
+  ['strains', 'Два штамма пневмококка', (m) => {
+    const p = panel(0);
+    say(p, '1928', 150, 130, .2, { size: 56, fill: DNA, weight: 700, anchor: 'start' });
+    say(p, 'Фред Гриффит: пневмококк', 320, 130, .4, { size: 34, weight: 600, anchor: 'start' });
+    say(p, 'два штамма', 800, 230, m('two'), { size: 32, fill: COL.dim, weight: 600 });
+    const rows = [['S', 380, 's', 'гладкий, с капсулой', false], ['R', 640, 'r', 'шероховатый, без капсулы', true]];
+    rows.forEach(([k, y, mark, desc, alive]) => {
+      const t0 = m(mark);
+      say(p, k, 250, y + 22, t0, { size: 64, fill: STRAIN[k], weight: 700 });
+      bact(p, k, 450, y, t0 + .2, { s: 1.6 });
+      say(p, desc, 450, y + 90, t0 + .4, { size: 26, fill: STRAIN[k], weight: 600 });
+      arrowTo(p, 580, y, 760, y, COL.dim, t0 + 1);
+      mouse(p, 900, y + 6, t0 + 1.3, 1.2);
+      fate(p, alive, 1170, y + 10, t0 + 1.8);
+    });
+    const cap = G(p, { x: 450, y: 380, o: 0 });
+    path(cap, 'M58 -40L120 -90', { stroke: COL.nat, 'stroke-width': 2.5 });
+    T(cap, 'капсула прячет от иммунитета', { x: 128, y: -96, size: 24, fill: COL.nat, weight: 600 });
+    show(cap, m('s', 1.4));
+  }],
+  ['griffith', 'Опыт Гриффита', (m) => {
+    const p = panel(0), ys = [210, 360, 510, 660];
+    [['что ввели', 330], ['мышь', 860], ['в крови', 1360]].forEach(([s, x]) => say(p, s, x, 110, .2, { size: 28, fill: COL.dim, weight: 600 }));
+    const lane = (i, mark, cells, alive, label) => {
+      const y = ys[i], t0 = m(mark);
+      const made = cells.map(([k, dx, opt]) => bact(p, k, 330 + dx, y, t0, opt));
+      say(p, label, 330, y + 62, t0 + .2, { size: 22, fill: COL.dim });
+      arrowTo(p, 500, y, 700, y, COL.dim, t0 + .4);
+      mouse(p, 860, y + 6, t0 + .6);
+      fate(p, alive, 1100, y + 10, t0 + 1);
+      return made;
+    };
+    lane(0, 'l1', [['S', 0]], false, 'живые S');
+    bact(p, 'S', 1360, ys[0], m('l1', 1.3));
+    lane(1, 'l2', [['R', 0]], true, 'живые R');
+    lane(2, 'l3', [['S', 0, { dead: true }]], true, 'убитые нагреванием S');
+    // lane 4: dead S + live R, the R cell later gets a capsule
+    const y = ys[3], t0 = m('l4');
+    bact(p, 'S', 270, y, t0, { dead: true });
+    const r = bact(p, 'R', 400, y, t0 + .3, { cap: 'hidden' });
+    say(p, 'убитые S + живые R', 330, y + 62, t0 + .5, { size: 22, fill: COL.chalk, weight: 600 });
+    arrowTo(p, 500, y, 700, y, COL.dim, t0 + 1.2);
+    mouse(p, 860, y + 6, t0 + 1.5);
+    fate(p, false, 1100, y + 10, m('dead'));
+    const s4 = bact(p, 'S', 1360, y, m('blood'));
+    pulse(s4, m('blood', .5), 1.4);
+    const box = mk('rect', { x: 150, y: y - 62, width: 1350, height: 150, rx: 18, fill: 'none', stroke: DNA, 'stroke-width': 3 }, p);
+    put(box, { o: 0 }); show(box, m('l4', -.3));
+    // transformation: something passes from the dead S into the live R
+    arrowTo(p, 300, y - 40, 372, y - 40, DNA, m('trans'), true);
+    show(r.cap, m('trans', .8));
+    tw(r.body, { c_stroke: STRAIN.S, c_fill: mix(COL.board, STRAIN.S, .35) }, m('trans', .8), .8);
+    say(p, 'R → S, и потомки тоже S', 330, y + 108, m('trans', 2.6), { size: 24, fill: DNA, weight: 700 });
+    pill(p, 'трансформация', DNA, 620, 850, m('name'), 32);
+    say(p, 'неизвестное вещество — «трансформирующий фактор»', 1150, 860, m('name', 1.6), { size: 24, fill: COL.dim });
+  }],
+  ['q2', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz(WIDE, [{
+    id: 'c-griffith', prompt: ['Убитые S + живые R → мышь погибла, в крови живые S. Что это доказывает?'],
+    build: choice(['Нагревание не убивает S-клетки: они ожили', 'Что-то из убитых S-клеток превратило живые R в S', 'Живые R-клетки сами убивают мышь', 'Мышь убивает капсула убитых клеток'], 1,
+      'Верно. Это трансформация: R-клетки получили признак S и передали его потомкам.',
+      ['Убитые клетки отдельно мышь не убивают (третья строка): они не ожили.', null,
+        'Живые R отдельно безвредны (вторая строка).', 'Убитые S отдельно безвредны, хотя капсула при них (третья строка).']),
+  }], done) }],
+  ['avery1', '1944: какая фракция работает', (m) => {
+    const p = panel(0);
+    say(p, '1944', 150, 120, .2, { size: 56, fill: DNA, weight: 700, anchor: 'start' });
+    say(p, 'Эйвери, Маклауд, Маккарти', 320, 120, .4, { size: 34, weight: 600, anchor: 'start' });
+    say(p, 'экстракт убитых S делят на классы молекул', 800, 210, m('split'), { size: 28, fill: COL.dim });
+    const fr = [['белки', PROT], ['РНК', RNA], ['ДНК', DNA], ['липиды', COL.dim], ['углеводы', COL.dim]];
+    fr.forEach(([lab, c], i) => {
+      const x = 260 + i * 270, t = tube(p, x, 270, m('list', i * .45), { w: 76, h: 220 });
+      t.fill(110, 220, c, m('list', i * .45 + .2));
+      say(p, lab, x, 540, m('list', i * .45 + .2), { size: 28, fill: c, weight: 700 });
+      for (let k = 0; k < 3; k++) {
+        const b = bact(p, 'R', x - 20 + k * 20, 230, m('add', i * .15), { s: .32 });
+        tw(b, { y: 420 - k * 14 }, m('add', .4 + i * .15), .7, io);
+      }
+      const d = dish(p, x, 660, m('add', 1.5 + i * .1), i === 2 ? 'S' : 'R');
+      d.grow(m('only', i === 2 ? .3 : -.6));
+      if (i === 2) pulse(d, m('only', 1), 1.15);
+    });
+    say(p, '+ живые R', 40, 330, m('add'), { size: 26, fill: STRAIN.R, weight: 600, anchor: 'start' });
+    say(p, 'колонии S — только с ДНК', 800, 780, m('only', .8), { size: 32, fill: DNA, weight: 700 });
+  }],
+  ['avery2', 'Решающий опыт: ферменты', (m) => {
+    const p = panel(0), xs = [360, 800, 1240];
+    say(p, 'в экстракте могла остаться примесь белка', 800, 100, .2, { size: 30, fill: COL.dim });
+    say(p, 'фермент разрушает один класс молекул', 800, 160, m('enz'), { size: 30, weight: 600 });
+    const rows = [['протеаза', 'белки', PROT, 'pro', true], ['РНКаза', 'РНК', RNA, 'rnase', true], ['ДНКаза', 'ДНК', DNA, 'dnase', false]];
+    rows.forEach(([enz, kills, c, mark, ok], i) => {
+      const x = xs[i], t0 = m(mark);
+      const t = tube(p, x - 60, 220, t0, { w: 70, h: 200 });
+      t.fill(90, 200, COL.chalk, t0 + .1, .2);
+      say(p, '+ ' + enz, x + 40, 300, t0 + .2, { size: 30, fill: COL.rat, weight: 700, anchor: 'start' });
+      const k = say(p, kills, x + 40, 350, t0 + .4, { size: 28, fill: c, weight: 600, anchor: 'start' });
+      strike(p, x + 34, x + 46 + uiW(kills, 28), 340, t0 + .8);
+      const d = dish(p, x, 520, t0 + .6, ok ? 'S' : 'R');
+      d.grow(t0 + 1);
+      say(p, ok ? 'трансформация есть' : 'трансформации нет', x, 600, t0 + 1.3, { size: 28, fill: ok ? OK : NO, weight: 700 });
+    });
+    say(p, 'без белков идёт → белки не нужны', 800, 700, m('logic', 2.2), { size: 30, weight: 600 });
+    say(p, 'без ДНК не идёт → ДНК необходима', 800, 750, m('without'), { size: 30, weight: 600 });
+    pill(p, 'трансформирующий фактор — ДНК', DNA, 800, 840, m('fact'), 34);
+  }],
+  ['q3', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz(WIDE, [{
+    id: 'c-enzyme', prompt: ['В экстракт убитых S-клеток добавили фермент. Будет ли трансформация R-клеток?'],
+    build: grid(Q_ENZ, [['y', 'Есть', OK], ['n', 'Нет', NO]], { multi: false, text: true }),
+  }], done) }],
+  ['phage', '1952: фаг и две метки', (m) => {
+    const p = panel(0);
+    say(p, 'скептики: «из 4 нуклеотидов — только простая молекула»', 800, 90, .2, { size: 28, fill: COL.dim });
+    say(p, 'опроверг Чаргафф: состав ДНК у видов разный (глава 3)', 800, 136, m('chargaff'), { size: 26, fill: COL.dim });
+    say(p, '1952', 120, 230, m('year'), { size: 56, fill: DNA, weight: 700, anchor: 'start' });
+    say(p, 'Херши и Чейз: фаг T2 и E. coli', 290, 230, m('year', .4), { size: 32, weight: 600, anchor: 'start' });
+    const f = phage(p, 420, 480, m('year', 3), { s: 1.9 });
+    const lc = G(p, { o: 0 });
+    path(lc, 'M510 390L620 340', { stroke: PROT, 'stroke-width': 2.5 });
+    T(lc, 'белковая оболочка', { x: 630, y: 340, size: 28, fill: PROT, weight: 700 });
+    show(lc, m('coat'));
+    pulse(f.head, m('coat', .2), 1.08);
+    const ld = G(p, { o: 0 });
+    path(ld, 'M450 470L620 440', { stroke: DNA, 'stroke-width': 2.5 });
+    T(ld, 'ДНК', { x: 630, y: 448, size: 28, fill: DNA, weight: 700 });
+    show(ld, m('dna'));
+    // the phage lands on a cell wall and injects something
+    draw(path(p, 'M150 770Q420 740 700 770', { stroke: COL.chalk, 'stroke-width': 5, fill: 'none' }, { d: 0 }), m('inj', -.6), .6);
+    say(p, 'клетка', 700, 812, m('inj', -.3), { size: 24, fill: COL.dim, anchor: 'end' });
+    tw(f, { y: 500 }, m('inj'), .8);
+    const q = say(p, 'что входит в клетку: белок или ДНК?', 420, 850, m('inj', 1.4), { size: 28, fill: COL.chalk, weight: 600 });
+    infoCard(p, 920, 330, 600, '³²P → метит ДНК', ['фосфор — в каждом нуклеотиде', ['в белках почти нет', COL.dim]], DNA, m('p'), .9);
+    infoCard(p, 920, 560, 600, '³⁵S → метит белок', ['сера — в метионине и цистеине', ['в ДНК нет', COL.dim]], PROT, m('s'), .9);
+    tw(f.dna, { 'a_stroke-width': 8 }, m('p', .3), .5);
+    tw(f.head, { c_fill: mix(COL.board, PROT, .45) }, m('s', .3), .5);
+  }],
+  ['hershey', 'Блендер и центрифуга', (m) => {
+    const p = panel(0), ys = [300, 640], cx = [330, 760, 1180];
+    [['1. заражение', 'inf'], ['2. блендер', 'blend'], ['3. центрифуга', 'cent']].forEach(([s, mark], i) => say(p, s, cx[i], 90, m(mark), { size: 30, weight: 700 }));
+    [['³²P', DNA], ['³⁵S', PROT]].forEach(([s, c], i) => say(p, s, 90, ys[i] + 18, .2, { size: 48, fill: c, weight: 700 }));
+    say(p, 'ДНК', 90, ys[0] + 60, .3, { size: 24, fill: DNA }); say(p, 'белок', 90, ys[1] + 60, .3, { size: 24, fill: PROT });
+    ys.forEach((y, i) => {
+      const hot = i === 0 ? DNA : PROT;
+      // 1. phage on a bacterium
+      const cell = G(p, { x: cx[0], y: y + 40, o: 0 });
+      mk('ellipse', { rx: 110, ry: 52, fill: CARD, stroke: COL.chalk, 'stroke-width': 3 }, cell);
+      show(cell, m('inf'));
+      const f = phage(p, cx[0], y - 68, m('inf', .3), { s: .5 });
+      if (i === 0) tw(f.dna, { 'a_stroke-width': 9 }, m('inf', .5), .4); else tw(f.head, { c_fill: mix(COL.board, PROT, .55) }, m('inf', .5), .4);
+      const inj = path(p, `M${cx[0]} ${y + 14}C${cx[0] - 40} ${y + 30} ${cx[0] + 40} ${y + 50} ${cx[0] - 10} ${y + 66}`, { stroke: DNA, 'stroke-width': i === 0 ? 7 : 3, fill: 'none' }, { d: 0 });
+      draw(inj, m('inf', 1), .8);
+      // 2. blender: the cell keeps the DNA, empty coats float off
+      arrowTo(p, cx[0] + 140, y + 20, cx[1] - 150, y + 20, COL.dim, m('blend', -.2));
+      const jar = mk('path', { d: `M${cx[1] - 120} ${y - 110}L${cx[1] - 100} ${y + 120}H${cx[1] + 100}L${cx[1] + 120} ${y - 110}`, fill: 'none', stroke: COL.dim, 'stroke-width': 3 }, p);
+      put(jar, { o: 0 }); show(jar, m('blend'));
+      const c2 = G(p, { x: cx[1], y: y + 60, o: 0 });
+      mk('ellipse', { rx: 70, ry: 34, fill: CARD, stroke: COL.chalk, 'stroke-width': 3 }, c2);
+      path(c2, 'M-30 -6C-6 -20 10 16 30 0', { stroke: DNA, 'stroke-width': i === 0 ? 7 : 3, fill: 'none' });
+      show(c2, m('blend', .3));
+      [[-50, -60], [40, -70]].forEach(([dx, dy], k) => {
+        const e = phage(p, cx[1] + dx, y + dy, m('blend', .6 + k * .2), { s: .32, empty: true });
+        if (i === 1) tw(e.head, { c_fill: mix(COL.board, PROT, .55) }, m('blend', .6), .1);
+        tw(e, { r: k ? 25 : -20, y: y + dy - 20 }, m('blend', .8), 1.4);
+      });
+      // 3. centrifuge tube: supernatant on top, pellet at the bottom
+      arrowTo(p, cx[1] + 140, y + 20, cx[2] - 70, y + 20, COL.dim, m('cent', -.2));
+      const t = tube(p, cx[2], y - 110, m('cent'), { w: 84, h: 230 });
+      const sup = t.fill(40, 190, COL.chalk, m('cent', .5), .14);
+      const pel = t.fill(190, 230, COL.chalk, m('cent', .8), .5);
+      say(p, 'супернатант: оболочки', cx[2] + 70, y - 20, m('cent', 1.2), { size: 24, fill: COL.dim, anchor: 'start' });
+      say(p, 'осадок: бактерии', cx[2] + 70, y + 110, m('cent', 2.4), { size: 24, fill: COL.dim, anchor: 'start' });
+      const lit = i === 0 ? pel : sup, at = m(i === 0 ? 'res32' : 'res35');
+      tw(lit, { c_fill: hot, 'a_fill-opacity': .85 }, at, .6);
+      pulse(t, at + .5, 1.08);
+    });
+    pill(p, 'в клетку входит ДНК, оболочка остаётся снаружи', DNA, 800, 860, m('concl'), 30);
+  }],
+  ['q4', 'Быстрая проверка', () => {
+    const p = panel(0), t = tube(p, 520, 170, .2, { w: 150, h: 520 });
+    S.sup = t.fill(60, 430, COL.chalk, .3, .14);
+    S.pel = t.fill(430, 520, COL.chalk, .3, .5);
+    say(p, 'супернатант', 340, 420, .4, { size: 28, fill: COL.dim, anchor: 'end' });
+    say(p, 'осадок', 340, 650, .4, { size: 28, fill: COL.dim, anchor: 'end' });
+  }, { ask: done => quiz({ x: 820, y: 170, w: 700, cls: 'side' }, [{
+    id: 'c-label', prompt: ['Фаги с меткой ³⁵S заразили бактерии, смесь взболтали в блендере и центрифугировали. Щёлкните, где окажется метка.'],
+    build: pickEls([{ el: S.sup, box: [440, 225, 160, 375], label: 'супернатант' }, { el: S.pel, box: [440, 600, 160, 100], label: 'осадок' }], 0,
+      '³⁵S метит белок оболочек, а оболочки остаются снаружи клеток и уходят в супернатант.',
+      () => 'В осадке бактерии, а в них вошла только ДНК фага. Сера метит белок оболочки.',
+      () => fx(S.sup, { c_fill: PROT, 'a_fill-opacity': .8 }, 0, .5)),
+  }], done) }],
+  ['offspring', 'Потомство фагов', (m) => {
+    const p = panel(0);
+    const cell = G(p, { x: 560, y: 460, o: 0 });
+    mk('ellipse', { rx: 380, ry: 230, fill: CARD, stroke: COL.chalk, 'stroke-width': 4 }, cell);
+    show(cell, .2);
+    say(p, 'заражённая клетка', 560, 760, .3, { size: 26, fill: COL.dim });
+    [[-220, -60], [-80, -110], [70, -70], [210, -110], [-150, 90], [10, 70], [170, 100]].forEach(([dx, dy], i) => {
+      const f = phage(p, 560 + dx, 440 + dy, .6 + i * .2, { s: .55 });
+      tw(f.dna, { 'a_stroke-width': 7 }, m('kids', .3 + i * .1), .4);
+    });
+    say(p, 'новые фаги — с белковыми оболочками', 560, 160, .8, { size: 28, weight: 600 });
+    infoCard(p, 1020, 280, 500, 'В потомстве', [['³²P: заметная часть', DNA], ['³⁵S: почти нет', PROT]], COL.chalk, m('kids'), 1.4);
+    say(p, 'ДНК несёт информацию', 1270, 560, m('info'), { size: 30, fill: DNA, weight: 700 });
+    say(p, 'и о белках фага', 1270, 604, m('info', .3), { size: 30, fill: DNA, weight: 700 });
+  }],
+  ['timeline', 'Четыре опыта рядом', (m) => {
+    const p = panel(0), x0 = 60, dx = 380, w = 340;
+    draw(path(p, `M${x0} 160H${x0 + 3 * dx + w}`, { stroke: COL.faint, 'stroke-width': 3 }, { d: 0 }), .2, .8);
+    const cards = [['1869 · Мишер', ['нуклеин: много', 'фосфора, не белок'], 'm'], ['1928 · Гриффит', ['убитые S превращают', 'живые R в S'], 'g'],
+      ['1944 · Эйвери и др.', ['фактор — ДНК:', 'ДНКаза отменяет'], 'a'], ['1952 · Херши, Чейз', ['в клетку входит', 'ДНК, не белок'], 'h']];
+    cards.forEach(([t, lines, mark], i) => {
+      const x = x0 + i * dx;
+      const d = mk('circle', { cx: x + w / 2, cy: 160, r: 12, fill: DNA }, p);
+      put(d, { o: 0 }); show(d, m(mark));
+      infoCard(p, x, 220, w, t, lines, i ? DNA : COL.chalk, m(mark, .2), .5);
+    });
+    [1, 2].forEach(i => curveArrow(p, `M${x0 + i * dx + w / 2} 420C${x0 + i * dx + w / 2 + 60} 500 ${x0 + (i + 1) * dx + w / 2 - 60} 500 ${x0 + (i + 1) * dx + w / 2} 424`,
+      x0 + (i + 1) * dx + w / 2, 424, x0 + (i + 1) * dx + w / 2 - 60, 500, COL.chalk, m('chain', i * .6), .6));
+    say(p, 'каждый опыт отвечал на вопрос предыдущего', 1010, 560, m('chain', 1.4), { size: 26, fill: COL.dim });
+    say(p, 'как устроена молекула из 4 звеньев?', 800, 680, m('next'), { size: 32, weight: 600 });
+    pill(p, 'глава 2: из чего собрана', DNA, 560, 780, m('next', 3), 28);
+    pill(p, 'глава 3: двойная спираль', DNA, 1040, 780, m('next', 3.4), 28);
+  }],
+  ['wrap', 'Итоги', (m) => {
+    const p = panel(0);
+    numbered(p, [['ДНК → РНК → белок; из белка обратно информация не идёт.', 'w1'], ['Гриффит: убитые S превращают живые R в S — трансформация.', 'w2'],
+      ['Эйвери: фактор — ДНК, потому что ДНКаза отменяет трансформацию.', 'w3'], ['Херши и Чейз: в клетку входит ДНК фага (³²P), а не белок (³⁵S).', 'w4']], m, 230, 130, 30);
+  }],
+  ['final1', 'Практика главы', () => { panel(0); }, { ask: done => quiz(SCREEN, [{
+    id: 'p-years', prompt: ['Впишите год.'], build: blanks(P_YEARS),
+  }], done, 'Практика главы   1 из 3') }],
+  ['final2', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-tf', prompt: ['Верно или неверно?'], build: grid(P_TF, TF, { multi: false, text: true }),
+  }], done, 'Практика главы   2 из 3') }],
+  ['final3', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-who', prompt: ['Кто это показал?'],
+    build: grid(P_WHO, [['m', 'Мишер'], ['g', 'Гриффит', STRAIN.S], ['a', 'Эйвери', DNA], ['h', 'Херши и Чейз', PROT]], { multi: false, text: true }),
+  }], done, 'Практика главы   3 из 3') }],
+  ['finish', 'Готово', () => {}, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+/* ---------- question data ---------- */
+const Q_DOGMA = [
+  { parts: ['Синтез РНК на матрице ДНК'], ans: ['tr'], why: 'ДНК → РНК — транскрипция.' },
+  { parts: ['Копирование ДНК перед делением клетки'], ans: ['rep'], why: 'ДНК → ДНК — репликация.' },
+  { parts: ['Синтез белка по матрице РНК'], ans: ['tl'], why: 'РНК → белок — трансляция.' },
+  { parts: ['Ретровирус строит ДНК по своей РНК'], ans: ['rt'], why: 'РНК → ДНК — обратная транскрипция (Темин и Балтимор, 1970).' },
+];
+const Q_ENZ = [
+  { parts: ['протеаза'], ans: ['y'], why: 'Белки разрушены, а трансформация идёт: белки не нужны.' },
+  { parts: ['РНКаза'], ans: ['y'], why: 'РНК разрушена, а трансформация идёт.' },
+  { parts: ['ДНКаза'], ans: ['n'], why: 'ДНК разрушена — трансформирующий фактор потерян.' },
+  { parts: ['протеаза и РНКаза вместе'], ans: ['y'], why: 'ДНК цела, значит, трансформация есть.' },
+  { parts: ['ДНКаза и протеаза вместе'], ans: ['n'], why: 'Без ДНК трансформации нет, что бы ни было с белками.' },
+];
+const P_YEARS = [
+  { parts: ['Мишер выделил нуклеин: ', { box: '1869' }, ' г.'], why: '1869 год.', hint: 'XIX век, на 83 года раньше опыта Херши и Чейз.' },
+  { parts: ['Опыт Гриффита с пневмококком: ', { box: '1928' }, ' г.'], why: '1928 год.', hint: 'Первый из трёх опытов XX века.' },
+  { parts: ['Эйвери, Маклауд и Маккарти: ', { box: '1944' }, ' г.'], why: '1944 год.', hint: 'Через 16 лет после Гриффита.' },
+  { parts: ['Херши и Чейз: ', { box: '1952' }, ' г.'], why: '1952 год.', hint: 'За год до модели двойной спирали (1953).' },
+];
+const P_TF = [
+  { parts: ['Информацию можно переписать из белка обратно в РНК.'], ans: ['f'], why: 'Пути из белка к нуклеиновым кислотам нет.' },
+  { parts: ['Обратная транскрипция — синтез ДНК на матрице РНК.'], ans: ['t'], why: 'Её используют ретровирусы.' },
+  { parts: ['Мышь выжила после введения S-клеток, убитых нагреванием.'], ans: ['t'], why: 'Убитые бактерии не размножаются.' },
+  { parts: ['У R-штамма пневмококка есть полисахаридная капсула.'], ans: ['f'], why: 'Капсула у S-штамма; R — без капсулы.' },
+  { parts: ['После обработки экстракта протеазой трансформации нет.'], ans: ['f'], why: 'Есть: белки для трансформации не нужны.' },
+  { parts: ['Изотоп ³²P метит ДНК фага.'], ans: ['t'], why: 'Фосфор есть в каждом нуклеотиде и почти нет в белках.' },
+  { parts: ['После центрифуги метка ³⁵S оказалась в осадке, внутри бактерий.'], ans: ['f'], why: 'В супернатанте, вместе с оболочками.' },
+];
+const P_WHO = [
+  { parts: ['В ядре есть особое вещество, богатое фосфором'], ans: ['m'], why: 'Мишер, 1869: нуклеин.' },
+  { parts: ['Убитые S-клетки превращают живые R-клетки в S'], ans: ['g'], why: 'Гриффит, 1928: трансформация.' },
+  { parts: ['ДНКаза отменяет трансформацию, протеаза — нет'], ans: ['a'], why: 'Эйвери, Маклауд и Маккарти, 1944.' },
+  { parts: ['Метка ³²P фага оказывается внутри бактерий'], ans: ['h'], why: 'Херши и Чейз, 1952.' },
+  { parts: ['При заражении белковая оболочка фага остаётся снаружи клетки'], ans: ['h'], why: 'Херши и Чейз: ³⁵S уходит в супернатант.' },
+  { parts: ['Трансформацию вызывают не белки и не РНК'], ans: ['a'], why: 'Эйвери: работает только фракция ДНК.' },
+];
+boot();
+</script>
+</body>
+</html>
