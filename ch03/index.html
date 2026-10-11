@@ -14,30 +14,9 @@
 <script src="audio/ru/timings.js"></script>
 <script>
 'use strict';
-const CHAPTER = { number: 3, title: 'Двойная спираль', minutes: 12, language: 'ru' };
+const CHAPTER = { number: 3, title: 'Двойная спираль', minutes: 12, language: 'ru', next: '../ch04/' };
 
 /* ---------- chapter drawing helpers (shared ones: lib/bio.js) ---------- */
-// The year in large amber at the top left, names beside it (as in ch01).
-function yearTag(p, year, names, t0) {
-  say(p, year, 90, 118, t0, { size: 58, fill: DNA, weight: 700, anchor: 'start' });
-  say(p, names, 90 + uiW(year, 58) * 1.12 + 30, 112, t0 + .3, { size: 30, fill: COL.dim, weight: 600, anchor: 'start' });
-}
-// A bracket from x1 to x2 at height y with its label above (up) or below.
-function hBracket(p, x1, x2, y, str, color, t0, { up = true, size = 26 } = {}) {
-  const g = G(p, { o: 0 }), h = up ? 12 : -12;
-  path(g, `M${x1} ${y + h}V${y}H${x2}V${y + h}`, { stroke: color, 'stroke-width': 3 });
-  T(g, str, { x: (x1 + x2) / 2, y: up ? y - 14 : y + 36, size, fill: color, weight: 700, anchor: 'middle' });
-  show(g, t0);
-  return g;
-}
-// A vertical bracket from y1 to y2 at x with its label to the right (or left).
-function vBracket(p, x, y1, y2, str, color, t0, { right = true, size = 26 } = {}) {
-  const g = G(p, { o: 0 }), w = right ? -12 : 12;
-  path(g, `M${x + w} ${y1}H${x}V${y2}H${x + w}`, { stroke: color, 'stroke-width': 3 });
-  T(g, str, { x: x + (right ? 14 : -14), y: (y1 + y2) / 2 + 9, size, fill: color, weight: 700, anchor: right ? 'start' : 'end' });
-  show(g, t0);
-  return g;
-}
 // A composition bar: A, T, G, C in percent, w px = 100 %. Segments start hidden: {seg: {A: g…}, xs: {A: [x1, x2]…}}.
 function compBar(p, x, y, w, comp, { h = 64 } = {}) {
   const out = { seg: {}, xs: {} };
@@ -48,72 +27,6 @@ function compBar(p, x, y, w, comp, { h = 64 } = {}) {
     mk('rect', { x: cx, y, width: ww - 4, height: h, rx: 10, fill: BASE[b] }, g);
     T(g, `${b} ${comp[b]} %`, { x: cx + ww / 2, y: y + h / 2 + 10, size: 28, fill: COL.board, weight: 700, anchor: 'middle' });
     out.seg[b] = g; out.xs[b] = [cx, cx + ww - 4]; cx += ww;
-  });
-  return out;
-}
-// Side view of B-DNA along a horizontal axis, 10 px per ångström by default (pitch P = 34 Å, radius A = 10 Å): two backbones
-// as sine curves, strand 1 leading strand 2 by the minor-groove width; base-pair rungs every P/10; back halves dimmed.
-// Front segments run from upper left to lower right, as in a right-handed helix lying with its axis to the right.
-const RUNG_SEQ = 'ATGCGATCCGTAAGCTTGCAGTCAGGATCC';
-function helixSide(p, x0, y0, len, t0, { P = 340, A = 100, minor = 12 / 34 } = {}) {
-  const g = G(p, { o: t0 == null ? 1 : 0 }), k = 2 * Math.PI / P, d = minor * P;
-  const th = (x, s) => k * (x - x0 - s * d);
-  const yAt = (x, s) => y0 - A * Math.sin(th(x, s));
-  const seg = (s, front) => {
-    let str = '', pen = false;
-    for (let x = x0; x <= x0 + len + .1; x += 3) {
-      if ((Math.cos(th(x, s)) < 0) === front) { str += (pen ? 'L' : 'M') + x.toFixed(1) + ' ' + yAt(x, s).toFixed(1); pen = true; } else pen = false;
-    }
-    return str;
-  };
-  const back = G(g), mid = G(g), front = G(g);
-  [0, 1].forEach(s => path(back, seg(s, false), { stroke: COL.dim, 'stroke-width': 7, opacity: .5 }));
-  g.rungs = [];
-  for (let x = x0 + P / 20, i = 0; x < x0 + len; x += P / 10, i++) {
-    const b = RUNG_SEQ[i % RUNG_SEQ.length], ya = yAt(x, 0), yb = yAt(x, 1), ym = (ya + yb) / 2, r = G(mid);
-    path(r, `M${x} ${ya}V${ym}`, { stroke: BASE[b], 'stroke-width': 7 });
-    path(r, `M${x} ${ym}V${yb}`, { stroke: BASE[COMP[b]], 'stroke-width': 7 });
-    g.rungs.push(r);
-  }
-  [0, 1].forEach(s => path(front, seg(s, true), { stroke: COL.chalk, 'stroke-width': 8 }));
-  g.back = back; g.front = front; g.yAt = yAt;
-  g.crest = (j, s) => x0 + P / 4 + s * d + j * P;   // x of the j-th top crest of strand s
-  if (t0 != null) show(g, t0);
-  return g;
-}
-// A base pair drawn flat: b1 on the left (purine five-ring outward), b2 on the right (flipped), k hydrogen-bond dashes between
-// the facing ring edges. Returns {g, bonds, x1, x2 — the outer edges}.
-function flatPair(p, b1, b2, x, y, t0, { R = 46, L = 100, k } = {}) {
-  const g = G(p, { o: t0 == null ? 1 : 0 }), xr = x + 2 * .866 * R + L;
-  baseRings(g, b1, x, y, null, { R });
-  baseRings(g, b2, xr, y, null, { R, flip: true });
-  k = k ?? (b1 === 'G' || b1 === 'C' ? 3 : 2);
-  const bonds = G(g);
-  for (let j = 0; j < k; j++) {
-    const yy = y + (j - (k - 1) / 2) * 26;
-    path(bonds, `M${x + .866 * R + 10} ${yy}H${xr - .866 * R - 10}`, { stroke: COL.chalk, 'stroke-width': 3.5, 'stroke-dasharray': '7 6' });
-  }
-  const ext = b => PURINE[b] ? 2.405 * R : .866 * R;
-  if (t0 != null) show(g, t0);
-  return { g, bonds, x1: x - ext(b1), x2: xr + ext(b2) };
-}
-// A row of base letters in their colours with end labels, e.g. 5′- G A A T T C -3′. .chips[i], .xAt(i).
-function seqRow(p, seq, x, y, t0, { ends = ['5′', '3′'], dx = 44, size = 44, step = 0 } = {}) {
-  const g = G(p);
-  g.xAt = i => x + i * dx;
-  g.l = T(g, ends[0] + '–', { x: x - dx * .55, y, size: size * .7, fill: COL.dim, weight: 700, anchor: 'end', o: 0 });
-  g.r = T(g, '–' + ends[1], { x: g.xAt(seq.length - 1) + dx * .55, y, size: size * .7, fill: COL.dim, weight: 700, o: 0 });
-  g.chips = [...seq].map((b, i) => T(g, b, { x: g.xAt(i), y, size, fill: BASE[b], weight: 700, anchor: 'middle', o: 0 }));
-  if (t0 != null) { show(g.l, t0); g.chips.forEach((c, i) => show(c, t0 + i * step, .3)); show(g.r, t0 + (seq.length - 1) * step); }
-  return g;
-}
-// The lower row read right to left: copies of its letters fly into a new row in reverse order, with fresh end labels.
-function readBack(p, row, seq, x, y, t0, { dx = 44, size = 44 } = {}) {
-  const n = seq.length, out = seqRow(p, [...seq].reverse().join(''), x, y, null, { dx, size });
-  show(out.l, t0 + .9); show(out.r, t0 + .9);
-  out.chips.forEach((c, j) => {
-    const i = n - 1 - j, x0 = row.xAt(i), y0 = st(row.chips[i]).y;
-    put(c, { x: x0, y: y0 }); show(c, t0, .2); tw(c, { x: out.xAt(j), y }, t0 + .1 + j * .08, .8, io);
   });
   return out;
 }

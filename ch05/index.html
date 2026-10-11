@@ -1,0 +1,745 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Суперспирализация и топоизомеразы — ДНК и её копирование</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d2b27'/%3E%3Ctext x='32' y='45' text-anchor='middle' font-size='48' fill='%23f0b45a'%3E∞%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<script src="../lib/engine.js"></script>
+<script src="../lib/bio.js"></script>
+<script src="audio/ru/timings.js"></script>
+<script>
+'use strict';
+const CHAPTER = { number: 5, title: 'Суперспирализация и топоизомеразы', minutes: 13, language: 'ru', next: '../ch06/' };
+
+/* ---------- chapter drawing helpers (shared ones: lib/bio.js) ---------- */
+const C2 = mix(COL.chalk, COL.board, .35);   // the second strand of the ring model
+const nf = v => (v < 0 ? '−' : '') + String(Math.abs(v)).replace('.', ',');
+// A dashed frame (rect) hidden until t0.
+function frameR(p, x, y, w, h, color, t0, { dash = true, fill = 'none', o = 1 } = {}) {
+  const e = mk('rect', { x, y, width: w, height: h, rx: 14, fill, stroke: color, 'stroke-width': 3, ...(dash ? { 'stroke-dasharray': '9 7' } : {}) }, p);
+  put(e, { o: 0 }); if (t0 != null) tw(e, { o }, t0, .5);
+  return e;
+}
+// A card: a filled frame with its title.
+function card5(p, x, y, w, h, title, t0, color = PROT) {
+  frameR(p, x, y, w, h, color, t0, { dash: false, fill: CARD });
+  say(p, title, x + 26, y + 46, t0 + .2, { size: 30, fill: color, weight: 700, anchor: 'start' });
+}
+// An arc of radius R from angle a0 to a1 (degrees, clockwise positive, 0 = right), drawn as two halves so spans up to 360° work.
+const arcD = (cx, cy, R, a0, a1) => {
+  const pt = a => `${(cx + R * Math.cos(a * Math.PI / 180)).toFixed(1)} ${(cy + R * Math.sin(a * Math.PI / 180)).toFixed(1)}`;
+  const sw = a1 > a0 ? 1 : 0;
+  return `M${pt(a0)}A${R} ${R} 0 0 ${sw} ${pt((a0 + a1) / 2)}A${R} ${R} 0 0 ${sw} ${pt(a1)}`;
+};
+// A small circular arrow around (x, y): an arc and its head; ccw turns it the other way.
+function turnMark(p, x, y, r, color, t0, ccw = false) {
+  const g = G(p, { x, y, o: 0 }), a0 = ccw ? 60 : -150, a1 = ccw ? -210 : 120, rad = a1 * Math.PI / 180;
+  path(g, arcD(0, 0, r, a0, a1), { stroke: color, 'stroke-width': 4 });
+  const hx = r * Math.cos(rad), hy = r * Math.sin(rad), tx = -Math.sin(rad) * (ccw ? -1 : 1), ty = Math.cos(rad) * (ccw ? -1 : 1);
+  mk('path', { d: `M${hx + tx * 12} ${hy + ty * 12}L${hx - ty * 8 - tx * 4} ${hy + tx * 8 - ty * 4}L${hx + ty * 8 - tx * 4} ${hy - tx * 8 - ty * 4}Z`, fill: color }, g);
+  if (t0 != null) show(g, t0);
+  return g;
+}
+// A counter "L = 6": .to(v, t) switches the value with a flash, .count(v, t, dur) runs through the integers.
+function ctr(p, label, x, y, v, t0, { size = 52, fill = COL.chalk } = {}) {
+  const g = G(p, { x, y, o: 0 }), e = T(g, '', { size, fill, weight: 700 }), txt = n => `${label} = ${nf(n)}`;
+  e.textContent = txt(v); g.v = v;
+  const flash = t => { tw(e, { c_fill: DNA }, t, .2); tw(e, { c_fill: fill }, t + 1, .6); };
+  g.to = (v2, t) => { const a = g.v; g.v = v2; prog(q => { e.textContent = txt(q > 0 ? v2 : a); }, t, .05, lin); flash(t); return g; };
+  g.count = (v2, t, dur) => { const a = g.v; g.v = v2; prog(q => { e.textContent = txt(Math.round(a + (v2 - a) * q)); }, t, dur, lin); flash(t); return g; };
+  if (t0 != null) show(g, t0);
+  return g;
+}
+// Scissors, centred on (x, y).
+function scissors(p, x, y, t0, c = PROT) {
+  const g = G(p, { x, y, o: 0 });
+  path(g, 'M-18 -10L30 14M-18 10L30 -14', { stroke: c, 'stroke-width': 5 });
+  [-1, 1].forEach(s => mk('circle', { cx: -28, cy: 15 * s, r: 10, fill: 'none', stroke: c, 'stroke-width': 4 }, g));
+  if (t0 != null) show(g, t0);
+  return g;
+}
+// The fixed end of a DNA segment: a wall with hatching on the outer side (side −1: left).
+function pinWall(p, x, y, t0, side = -1) {
+  const g = G(p, { x, y, o: 0 });
+  path(g, 'M0 -62V62', { stroke: COL.chalk, 'stroke-width': 6 });
+  for (let k = -52; k <= 40; k += 22) path(g, `M0 ${k}l${side * 18} 18`, { stroke: COL.dim, 'stroke-width': 3 });
+  show(g, t0);
+  return g;
+}
+// A short duplex seen from above, (x1, y1) → (x2, y2): two strands with rungs, a board halo under it (so it covers what it
+// crosses) and an arrowhead for its direction.
+function dBar(p, x1, y1, x2, y2, c, { head = true, halo = true } = {}) {
+  const g = G(p), dx = x2 - x1, dy = y2 - y1, l = Math.hypot(dx, dy), ux = dx / l, uy = dy / l, nx = -uy * 10, ny = ux * 10;
+  if (halo) path(g, `M${x1} ${y1}L${x2} ${y2}`, { stroke: COL.board, 'stroke-width': 42, 'stroke-linecap': 'butt' });
+  for (let s = 12; s < l - 6; s += 22) path(g, `M${x1 + ux * s + nx} ${y1 + uy * s + ny}L${x1 + ux * s - nx} ${y1 + uy * s - ny}`, { stroke: c, 'stroke-width': 3, opacity: .6 });
+  [1, -1].forEach(k => path(g, `M${x1 + k * nx} ${y1 + k * ny}L${x2 + k * nx} ${y2 + k * ny}`, { stroke: c, 'stroke-width': 6 }));
+  if (head) mk('path', { d: `M${x2 + ux * 30} ${y2 + uy * 30}L${x2 - uy * 18} ${y2 + ux * 18}L${x2 + uy * 18} ${y2 - ux * 18}Z`, fill: c }, g);
+  return g;
+}
+// A T-segment seen end-on: a ringed disc with its letter.
+function tSeg(p, x, y) {
+  const g = G(p, { x, y, o: 0 });
+  mk('circle', { r: 24, fill: mix(COL.board, DNA, .4), stroke: DNA, 'stroke-width': 4 }, g);
+  T(g, 'T', { y: 9, size: 26, fill: DNA, weight: 700, anchor: 'middle' });
+  return g;
+}
+// A tachometer, 0–6000 rpm; .to(v, t, dur) turns the needle and the readout.
+function tacho(p, cx, cy, R, t0) {
+  const g = G(p, { x: cx, y: cy, o: 0 }), a0 = 150, span = 240, max = 6000, ang = v => a0 + span * v / max;
+  path(g, arcD(0, 0, R, a0, a0 + span), { stroke: COL.dim, 'stroke-width': 6 });
+  for (let v = 0; v <= max; v += 1000) {
+    const a = ang(v) * Math.PI / 180;
+    path(g, `M${((R - 18) * Math.cos(a)).toFixed(1)} ${((R - 18) * Math.sin(a)).toFixed(1)}L${(R * Math.cos(a)).toFixed(1)} ${(R * Math.sin(a)).toFixed(1)}`, { stroke: COL.chalk, 'stroke-width': 4 });
+    T(g, String(v / 1000), { x: (R - 42) * Math.cos(a), y: (R - 42) * Math.sin(a) + 8, size: 22, fill: COL.dim, weight: 700, anchor: 'middle' });
+  }
+  const val = T(g, '0', { y: R * .5, size: 36, weight: 700, anchor: 'middle' });
+  T(g, 'об/мин', { y: R * .5 + 34, size: 22, fill: COL.dim, weight: 600, anchor: 'middle' });
+  const nd = G(g, { r: a0 });
+  path(nd, `M0 0L${R - 30} 0`, { stroke: DNA, 'stroke-width': 6 });
+  mk('circle', { r: 11, fill: COL.chalk }, g);
+  g.v = 0;
+  g.to = (v, t, dur) => {
+    const a = g.v; g.v = v;
+    tw(nd, { r: ang(v) }, t, dur);
+    prog(q => { val.textContent = '≈ ' + Math.round((a + (v - a) * io(q)) / 100) * 100; }, t, dur, lin);
+    return g;
+  };
+  show(g, t0);
+  return g;
+}
+// A hard disk seen from above.
+function hdd(p, x, y, t0) {
+  const g = G(p, { x, y, o: 0 });
+  mk('rect', { x: -100, y: -125, width: 200, height: 250, rx: 16, fill: CARD, stroke: COL.dim, 'stroke-width': 3 }, g);
+  mk('circle', { cx: 0, cy: -25, r: 78, fill: 'none', stroke: COL.chalk, 'stroke-width': 4 }, g);
+  mk('circle', { cx: 0, cy: -25, r: 12, fill: COL.chalk }, g);
+  path(g, 'M72 100L64 30L22 -6', { stroke: COL.dim, 'stroke-width': 7 });
+  show(g, t0);
+  return g;
+}
+// The gyrase as three pairs of gates (side view), centred on (x, y): N-gate lobes (GyrB) on top, the DNA-gate blocks in the
+// middle, C-gate lobes (GyrA) at the bottom. .gate(k, open, t) opens or closes 'N', 'D' or 'C'.
+function gyrBody(p, x, y, t0) {
+  const g = G(p, { x, y, o: 0 }), fB = mix(COL.board, PROT, .45), fA = mix(COL.board, PROT, .28), sk = { stroke: PROT, 'stroke-width': 3 };
+  const lobe = (px, py, dx, dy, w, h, f) => {
+    const e = G(g, { x: px, y: py });
+    mk('rect', { x: dx - w / 2, y: dy - h / 2, width: w, height: h, rx: 44, fill: f, ...sk }, e);
+    return e;
+  };
+  g.C = [lobe(-12, 95, -46, 55, 92, 118, fA), lobe(12, 95, 46, 55, 92, 118, fA)];
+  g.N = [lobe(-12, -95, -50, -62, 100, 128, fB), lobe(12, -95, 50, -62, 100, 128, fB)];
+  g.D = [G(g), G(g)];
+  [0, 1].forEach(i => mk('rect', { x: i ? 6 : -150, y: -52, width: 144, height: 104, rx: 30, fill: fA, ...sk }, g.D[i]));
+  g.gate = (k, open, t, dur = .8) => {
+    if (k === 'D') g.D.forEach((e, i) => tw(e, { x: open ? (i ? 72 : -72) : 0 }, t, dur));
+    else g[k].forEach((e, i) => tw(e, { r: open ? (k === 'N' ? 1 : -1) * (i ? 30 : -30) : 0 }, t, dur));
+  };
+  if (t0 != null) show(g, t0);
+  return g;
+}
+
+/* ---------- beats: [id, title, run(m, D), { ask }?] ---------- */
+const STEPS = ['G-сегмент в воротах ДНК, T рядом', '2 АТФ: N-ворота закрыты, T внутри', 'G разрезан, Tyr122 на концах', 'ворота ДНК открыты, T проходит', 'разрыв зашит', 'T выходит через C-ворота', 'АТФ → АДФ + Фн, N-ворота открыты'];
+const BEATS = [
+  ['intro', 'Суперспирализация и топоизомеразы', (m, D) => {
+    const g = G(scene, { o: 0, y: 24 });
+    T(g, 'Раздел 1 «Открытие и строение ДНК» · Глава 5', { x: 800, y: 330, size: 28, fill: COL.dim, anchor: 'middle' });
+    T(g, 'Суперспирализация и топоизомеразы', { x: 800, y: 440, size: 70, weight: 600, anchor: 'middle' });
+    tw(g, { o: 1, y: 0 }, .2, 1.1, out);
+    const r = say(scene, 'число зацеплений, витки и супервитки, ферменты, которые режут ДНК', 800, 560, m('sub'), { size: 32, fill: COL.dim });
+    tw(g, { o: 0, y: -24 }, D - .9, .8); hide(r, D - .9, .8);
+  }],
+  ['problem', 'Кольцо без концов', (m) => {
+    const p = panel(0), cx = 450, cy = 440, X = 860;
+    const ring = twistRing(p, cx, cy, .3, { A: 270, B: 270, twist: 40, w: 10, sw: 4, K: 720, bs: .15 });
+    say(p, 'хромосома', cx, cy - 6, .5, { size: 28, fill: COL.dim, weight: 600 });
+    say(p, 'E. coli', cx, cy + 34, .5, { size: 28, fill: COL.dim, weight: 600 });
+    say(p, '4 600 000 п.н. · замкнутое кольцо', X, 150, .6, { size: 32, weight: 700, anchor: 'start' });
+    // one fork opens a bubble clockwise; the turns crowd into the rest of the ring
+    ring.set({ bub: .3, bs: .3, hb: 14 }, m('fork'), m('jam', 1.5) - m('fork'), lin);
+    say(p, 'вилка расплетает каждую пару', X, 220, m('fork'), { size: 28, fill: COL.dim, weight: 600, anchor: 'start' });
+    colorLine(p, [['4 600 000 / 10,5 ≈ '], ['440 000', DNA], [' витков']], X, 300, m('turns', 1), { size: 34, anchor: 'start' });
+    const ic = G(p, { o: 0 });
+    mk('circle', { cx: 900, cy: 400, r: 30, fill: 'none', stroke: COL.chalk, 'stroke-width': 5 }, ic);
+    turnMark(ic, 900, 400, 46, COL.chalk, null); put(ic.lastChild, { o: 1 });
+    path(ic, 'M864 436L936 364', { stroke: NO, 'stroke-width': 6 });
+    show(ic, m('ends'));
+    say(p, 'концов нет — вращать нечего', 970, 410, m('ends', .3), { size: 28, weight: 600, anchor: 'start' });
+    say(p, 'витки копятся впереди вилки', X, 500, m('jam'), { size: 28, weight: 600, anchor: 'start' });
+    const [fx, fy, nx, ny] = ring.pt(ring.cur, .45), sg = nx * fx + ny * fy < 0 ? -1 : 1;
+    yesNo(p, false, cx + fx + nx * sg * 52, cy + fy + ny * sg * 52, m('jam', 2.2));
+    say(p, 'вилка встаёт', X, 545, m('jam', 2.2), { size: 28, fill: NO, weight: 700, anchor: 'start' });
+    enzyme(p, 'топоизомераза', 990, 625, m('enz'), { w: 250, h: 76 });
+    scissors(p, 1170, 625, m('enz', .5));
+    say(p, 'разрезать → протащить цепь → зашить', X, 700, m('enz', 1.5), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+  }],
+  ['link', 'Число зацеплений', (m) => {
+    const p = panel(0), X = 980;
+    const ring = twistRing(p, 500, 420, .3, { A: 230, B: 230, twist: 6, w: 28, sw: 9, axis: true });
+    say(p, 'две замкнутые цепи, без разрывов', 500, 110, m('ring'), { size: 28, fill: COL.dim, weight: 600 });
+    ctr(p, 'L', X, 270, 6, m('count', 3.3), { size: 64 });
+    say(p, 'число зацеплений', X, 320, m('count', 3.3), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    ring.set({ A: 300, B: 150 }, m('bend'), 1.2).set({ A: 210, B: 250, wob: .16 }, m('bend', 1.4), 1.2)
+      .set({ A: 270, B: 200, wob: -.1 }, m('same'), 1.2).set({ A: 230, B: 230, wob: 0 }, m('chain', -.3), 1);
+    say(p, 'не меняется', X + 200, 270, m('same', .3), { size: 30, fill: DNA, weight: 700, anchor: 'start' });
+    const cat = catenane(p, X + 190, 590, m('chain'), { r: 52, d: 66, w: 9, col: [COL.chalk, COL.chalk] });
+    void cat;
+    say(p, 'звенья не расцепить, не разрезав', X + 190, 690, m('chain', .5), { size: 24, fill: COL.dim, weight: 600 });
+    say(p, 'L — целое число,', X, 410, m('whole'), { size: 30, weight: 700, anchor: 'start' });
+    say(p, 'меняется только через разрыв цепи', X, 452, m('whole', .3), { size: 30, weight: 700, anchor: 'start' });
+  }],
+  ['ltw', 'Витки и супервитки', (m) => {
+    const p = panel(0), cx = 500, cy = 450, X = 980;
+    const ring = twistRing(p, cx, cy, .3, { A: 230, B: 230, twist: 6, w: 28, sw: 9, axis: true });
+    const cL = ctr(p, 'L', X, 250, 6, .3, { size: 56 }), cT = ctr(p, 'T', X, 350, 6, m('twist'), { size: 56 }), cW = ctr(p, 'W', X, 450, 0, m('writhe'), { size: 56 });
+    void cL;
+    [['число зацеплений', .3], ['число витков', m('twist')], ['число супервитков', m('writhe')]].forEach(([s, t], i) =>
+      say(p, s, X + 190, 240 + i * 100, t, { size: 24, fill: COL.dim, weight: 600, anchor: 'start' }));
+    const nums = (c, t, tHide) => ring.xings(c).forEach((q, i) => {
+      const e = say(p, String(i + 1), cx + q.x + q.nx * 60, cy + q.y + q.ny * 60 + 11, t + i * .3, { size: 30, fill: DNA, weight: 700 });
+      if (tHide != null) hide(e, tHide, .4);
+    });
+    nums(ring.cur, m('twist', 1), m('t5'));
+    const ax = say(p, 'ось — пунктир', cx, cy + 10, m('writhe', 1), { size: 26, fill: COL.dim, weight: 600 });
+    hide(ax, m('t5'), .4);
+    // a coiled cord
+    const cord = G(p, { o: 0 });
+    let d = '';
+    for (let t = 0; t <= 34; t += .2) d += `${d ? 'L' : 'M'}${(X + 20 + 8 * t - 22 * Math.sin(t)).toFixed(1)} ${(600 + 22 * Math.cos(t)).toFixed(1)}`;
+    path(cord, d, { stroke: COL.chalk, 'stroke-width': 4 });
+    T(cord, 'перекрученный шнур', { x: X + 150, y: 668, size: 24, fill: COL.dim, weight: 600, anchor: 'middle' });
+    show(cord, m('cord')); hide(cord, m('t5', 1), .5);
+    const loopMarks = (c, t, tHide) => ring.loops(c).forEach(([lx, ly]) => {
+      const e = mk('circle', { cx: cx + lx, cy: cy + ly, r: 44, fill: 'none', stroke: DNA, 'stroke-width': 3, 'stroke-dasharray': '7 6' }, p);
+      put(e, { o: 0 }); show(e, t); if (tHide != null) hide(e, tHide, .4);
+    });
+    const s5 = { twist: 5, nu: 1, A: 290, B: 300 }, s4 = { twist: 4, nu: 2, A: 320, B: 220 };
+    ring.set(s5, m('t5', .3), 2.2);
+    cT.to(5, m('t5', 1.4)); cW.to(1, m('t5', 2));
+    loopMarks({ ...ring.cur }, m('t5', 2.6), m('t4'));
+    nums({ ...ring.cur }, m('t5', 2.8), m('t4'));
+    ring.set(s4, m('t4', .3), 2.2);
+    cT.to(4, m('t4', 1.4)); cW.to(2, m('t4', 2));
+    loopMarks({ ...ring.cur }, m('t4', 2.6));
+    nums({ ...ring.cur }, m('t4', 2.8));
+    colorLine(p, [['T + W = 4 + 2 = '], ['6', DNA], [' = L']], X, 560, m('sum', 1), { size: 40, anchor: 'start' });
+    colorLine(p, [['L', DNA], [' = '], ['T'], [' + '], ['W']], 800, 108, m('rule'), { size: 64 });
+    say(p, 'витки и супервитки переходят друг в друга, сумма закреплена', 800, 160, m('rule', 3.7), { size: 26, fill: COL.dim, weight: 600 });
+  }],
+  ['relaxed', 'Релаксированное кольцо', (m) => {
+    const p = panel(0), cx = 450, cy = 460, X = 880;
+    twistRing(p, cx, cy, .3, { A: 250, B: 250, twist: 30, w: 12, sw: 5, K: 720 });
+    say(p, 'витки нарисованы условно', cx, 170, .5, { size: 22, fill: COL.dim, weight: 600 });
+    say(p, '5250 п.н.', cx, cy + 14, m('ring'), { size: 44, weight: 700 });
+    pill(p, '10,5 п.н. на виток · B-форма в растворе · глава 3', DNA, 1160, 200, m('sol'), 26);
+    colorLine(p, [['T = 5250 / 10,5 = '], ['500', DNA]], X, 320, m('t'), { size: 36, anchor: 'start' });
+    colorLine(p, [['W = '], ['0', DNA], [' — супервитков нет']], X, 400, m('w'), { size: 36, anchor: 'start' });
+    pill(p, 'релаксированная', COL.chalk, cx, cy + 80, m('relax'), 26);
+    colorLine(p, [['L₀ = T + W = 500 + 0 = '], ['500', DNA]], X, 500, m('zero'), { size: 36, anchor: 'start' });
+    say(p, 'точка отсчёта', X, 550, m('zero', .8), { size: 28, fill: COL.dim, weight: 600, anchor: 'start' });
+  }],
+  ['sigma', 'Сверхспиральная плотность', (m) => {
+    const p = panel(0), cx = 420, cy = 470, X = 880;
+    twistRing(p, cx, cy, .3, { A: 230, B: 230, twist: 28, w: 12, sw: 5, K: 720 });
+    say(p, '5250 п.н.', cx, cy + 14, .4, { size: 40, weight: 700 });
+    const enz = enzyme(p, 'фермент', cx, 150, .5, { w: 170, h: 70 });
+    void enz;
+    scissors(p, cx + 120, 150, .8);
+    const gap = path(p, `M${cx - 22} ${cy - 230}H${cx + 22}`, { stroke: COL.board, 'stroke-width': 44, 'stroke-linecap': 'butt' });
+    put(gap, { o: 0 }); show(gap, 1.2, .3); hide(gap, 3.4, .4);
+    const cL = ctr(p, 'L', X, 290, 500, .5);
+    cL.count(470, m('l'), 1.4);
+    colorLine(p, [['ΔL = L − L₀ = 470 − 500 = '], ['−30', DNA]], X, 400, m('dl'), { size: 34, anchor: 'start' });
+    colorLine(p, [['σ = ΔL / L₀ = −30 / 500 = '], ['−0,06', DNA]], X, 490, m('sig', 1.5), { size: 34, anchor: 'start' });
+    say(p, 'сверхспиральная плотность', X, 535, m('sig', 2), { size: 24, fill: COL.dim, weight: 600, anchor: 'start' });
+    pill(p, 'бактерии: σ ≈ −0,06 · недокручена примерно на 6 %', DNA, 1180, 640, m('cell'), 26);
+  }],
+  ['variants', 'Витки или супервитки', (m) => {
+    const p = panel(0), X3 = [270, 800, 1330], cy = 310;
+    colorLine(p, [['у всех трёх колец '], ['L = 470', DNA]], 800, 76, .3, { size: 30 });
+    const ra = twistRing(p, X3[0], cy, m('v1'), { A: 145, B: 145, twist: 13, w: 9, sw: 4, K: 480 });
+    const rb = twistRing(p, X3[1], cy, m('v2'), { A: 220, B: 85, nu: 6, twist: 16, w: 8, sw: 4, K: 720 });
+    twistRing(p, X3[2], cy, m('v3'), { A: 200, B: 125, nu: 3, twist: 15, w: 8, sw: 4, K: 600 });
+    void ra; void rb;
+    say(p, 'T = 470 · W = 0', X3[0], 505, m('v1', 1), { size: 30, weight: 700 });
+    say(p, 'T = 500 · W = −30', X3[1], 505, m('v2', 1), { size: 30, weight: 700 });
+    say(p, '30 супервитков, нарисовано 6', X3[1], 540, m('v2', 2.5), { size: 22, fill: COL.dim, weight: 600 });
+    say(p, 'T = 485 · W = −15', X3[2], 505, m('v3', 1), { size: 30, weight: 700 });
+    // (a): fewer, longer turns
+    const strips = G(p, { o: 0 });
+    T(strips, 'п.н. на виток:', { x: 70, y: 552, size: 22, fill: COL.dim, weight: 600 });
+    helixSide(strips, 70, 586, 320, null, { P: 105, A: 18, n: 10.5 });
+    helixSide(strips, 70, 640, 320, null, { P: 112, A: 18, n: 11.2 });
+    T(strips, '10,5', { x: 410, y: 595, size: 26, fill: COL.dim, weight: 700 });
+    T(strips, '11,2', { x: 410, y: 649, size: 26, fill: DNA, weight: 700 });
+    show(strips, m('v1', 5));
+    hide(strips, m('sign'), .5);
+    const fr = frameR(p, 560, 170, 480, 390, DNA, m('free'));
+    const ft = say(p, 'в свободном кольце — в основном так', X3[1], 140, m('free'), { size: 24, fill: DNA, weight: 700 });
+    hide(fr, m('pack', -.3), .4); hide(ft, m('pack', -.3), .4);
+    const fc = say(p, 'T и W могут быть нецелыми, L — всегда целое', 800, 606, m('frac'), { size: 28, weight: 600 });
+    void fc;
+    // the sign scale
+    const sc = G(p, { o: 0 });
+    path(sc, 'M250 684H1350', { stroke: COL.chalk, 'stroke-width': 4 });
+    path(sc, 'M800 670V698', { stroke: COL.chalk, 'stroke-width': 4 });
+    T(sc, 'ΔL = 0', { x: 800, y: 726, size: 24, fill: COL.dim, weight: 700, anchor: 'middle' });
+    show(sc, m('sign'));
+    say(p, 'ΔL < 0 · недокручена · отрицательная', 250, 664, m('sign', 3.5), { size: 26, fill: DNA, weight: 700, anchor: 'start' });
+    say(p, 'ΔL > 0 · перекручена · положительная', 1350, 664, m('sign', 7.9), { size: 26, weight: 700, anchor: 'end' });
+    frameR(p, X3[0] - 164, cy - 164, 328, 328, COL.chalk, m('pack'));
+    frameR(p, X3[1] - 234, cy - 100, 468, 200, DNA, m('pack', .5));
+    say(p, 'супервитки занимают меньше места — уплотнение ДНК, глава 3', 800, 126, m('pack', 1), { size: 24, fill: DNA, weight: 700 });
+  }],
+  ['q1', 'Быстрая проверка', () => {
+    const p = panel(0);
+    colorLine(p, [['L = T + W', DNA], ['     ΔL = L − L₀     '], ['σ = ΔL / L₀', DNA]], 800, 120, .2, { size: 32 });
+  }, { ask: done => quiz({ x: 300, y: 190, w: 1000, cls: 'side', maxH: 620 }, [{
+    id: 'c-ltw', prompt: ['Найдите недостающие числа.'], build: blanks(Q_LTW),
+  }], done) }],
+  ['energy', 'Зачем недокручивать', (m) => {
+    const p = panel(0), cx = 480, cy = 590, X = 880;
+    const sp = G(p, { x: 190, y: 180, o: 0 });
+    path(sp, 'M-90 -42V42M90 -42V42', { stroke: COL.chalk, 'stroke-width': 7 });
+    path(sp, 'M-90 0L-74 -30L-54 30L-34 -30L-14 30L6 -30L26 30L46 -30L66 30L90 0', { stroke: COL.chalk, 'stroke-width': 4 });
+    T(sp, 'сжатая пружина', { y: 84, size: 22, fill: COL.dim, weight: 600, anchor: 'middle' });
+    show(sp, m('spring'));
+    pill(p, 'АТФ', COL.int, 400, 180, m('atp'), 26);
+    arrowTo(p, 450, 180, 540, 180, COL.chalk, m('atp', .5));
+    enzyme(p, 'гираза', 650, 180, m('atp', .8), { w: 170, h: 74 });
+    const ring = twistRing(p, cx, cy, m('back'), { A: 280, B: 110, nu: 4, twist: 18, w: 10, sw: 4.5, K: 720, bs: .25 });
+    say(p, 'L = 470', cx, 345, m('back', .3), { size: 32, fill: DNA, weight: 700 });
+    ring.set({ bub: .06, hb: 18 }, m('bubble'), 2.5);
+    ring.set({ nu: 0, A: 190, B: 190 }, m('gone', -.2), 2.5);
+    colorLine(p, [['расплетём 30 витков: 30 × 10,5 = '], ['315', DNA], [' п.н.']], X, 380, m('bubble', 1), { size: 30, anchor: 'start' });
+    colorLine(p, [['5250 − 315 = 4935 п.н.']], X, 440, m('rest'), { size: 30, anchor: 'start' });
+    colorLine(p, [['4935 / 10,5 = '], ['470', DNA], [' витков = L  ✓']], X, 500, m('rest', 2.5), { size: 30, anchor: 'start' });
+    colorLine(p, [['W = 0 · напряжение снято']], X, 560, m('gone', .5), { size: 30, anchor: 'start' });
+    pill(p, 'облегчает старт репликации и транскрипции', DNA, 1180, 640, m('start', 2), 26);
+    say(p, 'глава 4: тоже питаются недокрученностью', 1180, 110, m('ch4'), { size: 26, fill: COL.dim, weight: 600 });
+    ['B → Z', 'крест', 'триплекс'].forEach((s, i) => pill(p, s, COL.chalk, 1000 + i * 180, 180, m('ch4', 1.5 + i * .8), 26));
+    say(p, 'каждый поглощает часть недокрученности', 1180, 256, m('ch4', 5.9), { size: 24, fill: COL.dim, weight: 600 });
+  }],
+  ['ahead', 'Перекрученность впереди вилки', (m) => {
+    const p = panel(0), y = 240, xa = 200, xb = 1400, bp = (xb - xa) / 10500, xf = xa + 1050 * bp;
+    const fk = fork(p, xa, y, .3, { xEnd: xb, A: 26, P: 70, n: 6, back: 160, spread: 56 });
+    say(p, 'хеликаза раздвигает цепи, кольцо не вращается', 800, 428, m('fork', .5), { size: 24, fill: COL.dim, weight: 600 });
+    pinWall(p, xa - 4, y, m('seg'), -1); pinWall(p, xb + 4, y, m('seg'), 1);
+    hBracket(p, xa, xb, 158, '10 500 п.н., концы закреплены', COL.chalk, m('seg', .5));
+    colorLine(p, [['L = 10 500 / 10,5 = '], ['1000', DNA]], 800, 80, m('l'), { size: 32 });
+    fk.to(xf, m('move'), 2);
+    hBracket(p, xa, xf, 344, '1050 п.н.', DNA, m('move', 1.6), { up: false, size: 24 });
+    hBracket(p, xf + 4, xb, 344, '9450 п.н. → 9450 / 10,5 = 900 витков', COL.chalk, m('left', 1), { up: false, size: 24 });
+    fk.to(xf, m('extra', 2), 1.5, 58);
+    [520, 760, 1000, 1240].forEach((x, i) => say(p, '+', x, 205, m('extra', 3 + i * .3), { size: 40, fill: COL.chalk, weight: 700 }));
+    colorLine(p, [['L = 1000, а нужно 900:  ΔL = '], ['+100', DNA]], 800, 470, m('extra', .3), { size: 32 });
+    say(p, 'перекручена · положительные супервитки', 800, 512, m('extra', 3), { size: 26, fill: COL.dim, weight: 600 });
+    prog(q => put(fk.hel, { x: xf + 7 * Math.sin(q * Math.PI * 12) * (1 - q) }), m('stall', 3), 1.4, lin);
+    yesNo(p, false, xf, 112, m('stall', 4.5));
+    // transcription: the polymerase overwinds ahead, underwinds behind
+    const yr = 640, base = helixSide(p, 150, yr, 1300, m('rnap'), { P: 70, A: 24, n: 6 });
+    const pol = enzyme(p, 'РНК-полимераза', 430, yr, null, { w: 230, h: 96 });
+    path(pol, 'M-70 -40C-120 -100 -190 -100 -250 -90', { stroke: RNA, 'stroke-width': 6 });
+    pol.insertBefore(pol.lastChild, pol.firstChild);
+    show(pol, m('rnap', .3)); tw(pol, { x: 760 }, m('rnap', .8), 2.4);
+    hide(base, m('rnap', 3.2), .5);
+    helixSide(p, 875, yr, 575, m('rnap', 3.2), { P: 52, A: 24, n: 6 });
+    helixSide(p, 150, yr, 495, m('rnap', 3.2), { P: 96, A: 24, n: 6 });
+    say(p, '+  перекручена  +', 1160, 590, m('rnap', 3.5), { size: 26, weight: 700 });
+    say(p, '−  недокручена  −', 320, 718, m('rnap', 4.5), { size: 26, weight: 700 });
+  }],
+  ['q2', 'Быстрая проверка', () => {
+    const p = panel(0), y = 300;
+    pinWall(p, 120, y, .2, -1); pinWall(p, 1480, y, .2, 1);
+    helixSide(p, 124, y, 536, .3, { P: 70, A: 26, n: 6 });
+    helixSide(p, 940, y, 536, .3, { P: 70, A: 26, n: 6 });
+    const bub = G(p, { o: 0 });
+    [-1, 1].forEach(s => path(bub, `M660 ${y + s * 10}C700 ${y + s * 62} 900 ${y + s * 62} 940 ${y + s * 10}`, { stroke: COL.chalk, 'stroke-width': 7 }));
+    show(bub, .3);
+    const pol = enzyme(p, 'РНК-полимераза', 800, y, null, { w: 240, h: 96 });
+    path(pol, 'M-70 -40C-120 -110 -200 -120 -260 -110', { stroke: RNA, 'stroke-width': 6 });
+    pol.insertBefore(pol.lastChild, pol.firstChild);
+    show(pol, .3);
+    arrowTo(p, 1000, 150, 1140, 150, PROT, .4);
+    say(p, 'движется вправо', 1070, 124, .4, { size: 22, fill: PROT, weight: 600 });
+    S.picks = [[944, 1472, 'перед полимеразой'], [664, 936, 'пузырь'], [128, 656, 'позади полимеразы']].map(([a, b, lab]) =>
+      ({ el: frameR(p, a, y - 84, b - a, 168, COL.dim, .5), box: [a, y - 84, b - a, 168], label: lab }));
+  }, { ask: done => quiz({ x: 300, y: 470, w: 1000, cls: 'side', maxH: 400 }, [{
+    id: 'c-under', prompt: ['Где ДНК недокручена? Щёлкните участок.'],
+    build: pickEls(S.picks, 2, 'Позади полимеразы цепи смыкаются, а витков не хватает: ДНК недокручена, σ < 0.',
+      i => i === 0 ? 'Перед полимеразой витки сжимаются на меньшее число пар: там ДНК перекручена.'
+        : 'В пузыре цепи разделены и не обвивают друг друга; напряжение копится по бокам от него.'),
+  }], done) }],
+  ['topo', 'Топоизомеразы', (m) => {
+    const p = panel(0), cx = 760, cy = 470;
+    say(p, 'Топоизомеразы', 800, 86, .2, { size: 44, weight: 700 });
+    say(p, 'меняют число зацеплений', 800, 128, .5, { size: 26, fill: COL.dim, weight: 600 });
+    [['разрезать', 420], ['изменить положение цепей', 800], ['зашить', 1180]].forEach(([s, x], i) => pill(p, s, PROT, x, 196, m('rule', .5 + i * 1.6), 26));
+    arrowTo(p, 500, 196, 590, 196, COL.dim, m('rule', 1.6)); arrowTo(p, 1010, 196, 1100, 196, COL.dim, m('rule', 3.2));
+    // the type table; type II is shown in topo2
+    [['I тип', 1250], ['II тип', 1450]].forEach(([s, x]) => {
+      frameR(p, x - 92, 270, 184, 300, COL.dim, m('two', 1), { dash: false, fill: CARD });
+      say(p, s, x, 316, m('two', 1.3), { size: 30, weight: 700 });
+    });
+    say(p, '?', 1450, 440, m('two', 1.6), { size: 64, fill: COL.dim, weight: 700 });   // type II comes in topo2
+    say(p, 'режет', 1250, 380, m('one'), { size: 24, weight: 600 });
+    say(p, 'одну цепь', 1250, 412, m('one'), { size: 24, weight: 600 });
+    // a small ring and the close-up of its cut
+    const rg = twistRing(p, 220, 380, m('one', -1), { A: 120, B: 60, nu: 3, twist: 9, w: 6, sw: 3, K: 480 });
+    void rg;
+    const cL = ctr(p, 'L', 110, 560, 470, m('one', -1), { size: 40 }), cW = ctr(p, 'W', 110, 630, -30, m('one', -1), { size: 40 });
+    frameR(p, 470, 290, 600, 360, COL.dim, m('one', -.6));
+    show(path(p, 'M340 380L470 300M340 380L470 640', { stroke: COL.dim, 'stroke-width': 2, 'stroke-dasharray': '6 8' }, { o: 0 }), m('one', -.6));
+    enzyme(p, null, cx, cy, m('one', -.4), { w: 200, h: 150 });
+    say(p, 'топоизомераза I', cx, 625, m('one', -.4), { size: 24, fill: PROT, weight: 700 });
+    const aL = G(p, { o: 0 }), aR = G(p, { o: 0 });
+    path(aL, `M500 ${cy}H${cx}`, { stroke: COL.chalk, 'stroke-width': 9, 'stroke-linecap': 'butt' });
+    path(aR, `M${cx} ${cy}H1040`, { stroke: COL.chalk, 'stroke-width': 9, 'stroke-linecap': 'butt' });
+    show(aL, m('one', -.4)); show(aR, m('one', -.4));
+    const b = G(p, { x: cx, y: cy - 90, o: 0 });
+    mk('circle', { r: 20, fill: mix(COL.board, C2, .5), stroke: C2, 'stroke-width': 5 }, b);
+    show(b, m('one', -.4));
+    say(p, 'целая цепь (вид с торца)', cx + 40, cy - 112, m('one', -.2), { size: 22, fill: COL.dim, weight: 600, anchor: 'start' });
+    say(p, 'разрезаемая цепь', 1060, cy - 30, m('one', -.2), { size: 22, fill: COL.dim, weight: 600, anchor: 'end' });
+    scissors(p, cx, cy + 40, m('one', .3));
+    tw(aL, { x: -26 }, m('one', .8), .6); tw(aR, { x: 26 }, m('one', .8), .6);
+    tw(b, { y: cy + 92 }, m('pass'), 1.4);
+    tw(aL, { x: 0 }, m('seal'), .6); tw(aR, { x: 0 }, m('seal'), .6);
+    cW.to(-29, m('plus', .3)); cL.to(471, m('plus', 3.2));
+    say(p, 'ΔL = +1', 1250, 470, m('plus', 3.5), { size: 28, fill: DNA, weight: 700 });
+  }],
+  ['tyr', 'Энергия без АТФ', (m) => {
+    const p = panel(0), y = 470;
+    pill(p, 'I тип: АТФ не нужен', PROT, 800, 90, .2, 28);
+    say(p, 'IA, бактерии', 150, 340, .4, { size: 24, fill: COL.dim, weight: 600, anchor: 'start' });
+    const s = strand(p, 'ACGTACG', 230, y, .3, { dx: 120, r: 20 });
+    s.units.forEach(u => put(u.bead, { o: 0 }));
+    const u4 = s.units[4], right = [...s.units.slice(4), s.end3];
+    enzyme(p, 'топоизомераза I', 650, 610, m('grab'), { w: 260, h: 90 });
+    hide(u4.link, m('grab', 2), .3);
+    right.forEach(e => tw(e, { x: st(e).x + 50 }, m('grab', 2.2), .8));
+    const bond = path(p, `M700 ${y + 12}V565`, { stroke: PROT, 'stroke-width': 5 });
+    put(bond, { o: 0 }); show(bond, m('grab', 3));
+    const tyrL = say(p, 'Tyr–O–P', 714, 535, m('grab', 3), { size: 24, fill: PROT, weight: 700, anchor: 'start' });
+    const oh = say(p, 'OH', 612, y + 44, m('grab', 3), { size: 22, fill: COL.dim, weight: 700, anchor: 'start' });
+    const bl = say(p, 'тирозил-фосфодиэфирная связь', 800, 600, m('grab', 4.5), { size: 24, fill: PROT, weight: 600, anchor: 'start' });
+    colorLine(p, [['энергия: '], ['связь в ДНК', COL.chalk], ['  →  '], ['Tyr–O–P', PROT]], 800, 200, m('keep'), { size: 30 });
+    colorLine(p, [['обратный шаг: '], ['Tyr–O–P', PROT], ['  →  '], ['связь в ДНК', COL.chalk]], 800, 250, m('back'), { size: 30 });
+    const tm = turnMark(p, 1000, y, 46, COL.chalk, m('push', 1));
+    const pl = say(p, 'напряжение проворачивает цепь', 1110, y + 10, m('push', 1.3), { size: 24, weight: 600, anchor: 'start' });
+    // the cut closes again
+    const tc = m('push', 5);
+    right.forEach(e => tw(e, { x: st(e).x - 50 }, tc, .8));
+    show(u4.link, tc + .8, .3);
+    [bond, tyrL, oh, bl, tm, pl].forEach(e => hide(e, tc, .5));
+    // IB: the cut strand spins round the intact one
+    frameR(p, 960, 600, 580, 136, DNA, m('rot'), { dash: false, fill: CARD });
+    say(p, 'IB, эукариоты', 984, 636, m('rot'), { size: 24, fill: DNA, weight: 700, anchor: 'start' });
+    const ib = G(p, { o: 0 });
+    path(ib, 'M990 708H1514', { stroke: C2, 'stroke-width': 6 });
+    path(ib, 'M990 680H1240M1330 680H1514', { stroke: COL.chalk, 'stroke-width': 6 });
+    show(ib, m('rot', .3));
+    const spin = turnMark(p, 1285, 692, 26, COL.chalk, m('rot', .3));
+    tw(spin, { r: 1080 }, m('rot', 1), 3.5, lin);
+    const cnt = say(p, '', 1514, 636, m('rot', 1), { size: 24, weight: 700, anchor: 'end' });
+    prog(q => { cnt.textContent = 'оборотов: ' + Math.min(3, Math.floor(q * 3 + .02)); }, m('rot', 1), 3.5, lin);
+  }],
+  ['topo2', 'II тип', (m) => {
+    const p = panel(0), X = 880;
+    const tBot = dBar(p, 300, 170, 600, 690, DNA); put(tBot, { o: 0 });
+    const gL = G(p, { o: 0 }), gR = G(p, { o: 0 });
+    dBar(gL, 120, 430, 450, 430, COL.chalk, { head: false }); dBar(gR, 450, 430, 780, 430, COL.chalk);
+    const tTop = dBar(p, 300, 170, 600, 690, DNA); put(tTop, { o: 0 });
+    show(gL, .3); show(gR, .3); show(tTop, m('cross'));
+    const sg = G(p, { x: 690, y: 240, o: 0 });
+    mk('circle', { r: 34, fill: CARD, stroke: COL.chalk, 'stroke-width': 3 }, sg);
+    const plus = T(sg, '+', { y: 14, size: 44, weight: 700, anchor: 'middle' }), minus = T(sg, '−', { y: 14, size: 44, weight: 700, anchor: 'middle', o: 0 });
+    show(sg, m('cross', 2));
+    say(p, 'перекрёст', 690, 310, m('cross', 2), { size: 22, fill: COL.dim, weight: 600 });
+    tw(gL, { x: -36 }, m('cut'), .6); tw(gR, { x: 36 }, m('cut'), .6);
+    hide(tTop, m('pass', .2), .6); show(tBot, m('pass', .2), .6);
+    tw(gL, { x: 0 }, m('seal'), .6); tw(gR, { x: 0 }, m('seal'), .6);
+    hide(plus, m('flip'), .3); show(minus, m('flip', .2), .3); pulse(sg, m('flip'), 1.3);
+    colorLine(p, [['W: +1 → −1']], X, 200, m('flip', 1.9), { size: 32, anchor: 'start' });
+    colorLine(p, [['ΔW = −2  →  ΔL = '], ['−2', DNA], [' за цикл']], X, 256, m('flip', 4), { size: 32, anchor: 'start' });
+    pill(p, 'АТФ', COL.int, X + 50, 330, m('atp'), 24); pill(p, 'АТФ', COL.int, X + 160, 330, m('atp', .3), 24);
+    say(p, 'за цикл', X + 230, 338, m('atp', .6), { size: 24, fill: COL.dim, weight: 600, anchor: 'start' });
+    // the comparison table
+    const C = [X, 1180, 1420], R = [440, 510, 570, 630];
+    frameR(p, X - 20, 400, 680, 260, COL.dim, m('table'), { dash: false, fill: CARD });
+    say(p, 'I тип', C[1], R[0], m('table'), { size: 30, weight: 700 }); say(p, 'II тип', C[2], R[0], m('table'), { size: 30, weight: 700 });
+    [['разрез', 'одна цепь', 'обе цепи'], ['ΔL за цикл', '±1', '±2'], ['АТФ', 'не нужен', 'нужен']].forEach(([a, b, c], i) => {
+      say(p, a, C[0], R[i + 1], m('table', .3), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+      say(p, b, C[1], R[i + 1], m('table', 1.4 + i * 1.1), { size: 28, weight: 700 });
+      say(p, c, C[2], R[i + 1], m('table', 5.9 + i * 1.1), { size: 28, fill: DNA, weight: 700 });
+    });
+  }],
+  ['family1', 'Ферменты I типа', (m) => {
+    const p = panel(0);
+    // Topo I of bacteria
+    card5(p, 60, 60, 720, 330, 'Topo I бактерий', m('t1'));
+    say(p, 'снимает только отрицательные супервитки', 86, 160, m('t1', .5), { size: 24, weight: 600, anchor: 'start' });
+    say(p, 'не даёт ДНК недокрутиться сильнее нормы', 86, 200, m('t1', 2.5), { size: 24, weight: 600, anchor: 'start' });
+    const r1 = twistRing(p, 600, 300, m('t1', .5), { A: 90, B: 44, nu: 3, twist: 8, w: 5, sw: 3, K: 420 });
+    r1.set({ nu: 0, A: 64, B: 64 }, m('t1', 3), 1.5);
+    const wl = say(p, 'W < 0', 480, 310, m('t1', .8), { size: 26, fill: DNA, weight: 700, anchor: 'end' });
+    hide(wl, m('t1', 3), .4);
+    say(p, 'W = 0', 480, 310, m('t1', 3.4), { size: 26, fill: DNA, weight: 700, anchor: 'end' });
+    // Topo III
+    card5(p, 820, 60, 720, 330, 'Topo III', m('t3'));
+    say(p, 'расцепляет катенаны —', 846, 160, m('t3', .5), { size: 24, weight: 600, anchor: 'start' });
+    say(p, 'кольца, продетые одно в другое', 846, 200, m('t3', 1.5), { size: 24, weight: 600, anchor: 'start' });
+    catenane(p, 1180, 300, m('t3', 1.5), { r: 50, d: 60, w: 7 }).unlink(m('t3', 4), 150);
+    // Topo I of eukaryotes and camptothecin
+    card5(p, 60, 420, 720, 320, 'Topo I эукариот', m('euk'));
+    say(p, '±  снимает напряжение обоих знаков', 86, 520, m('euk', .5), { size: 24, weight: 600, anchor: 'start' });
+    const cy3 = 630, dna = G(p, { o: 0 });
+    path(dna, `M90 ${cy3 - 12}H262M298 ${cy3 - 12}H470M90 ${cy3 + 12}H470`, { stroke: COL.chalk, 'stroke-width': 6 });
+    show(dna, m('campt'));
+    enzyme(p, null, 280, cy3 + 34, m('campt'), { w: 110, h: 46 });
+    const cp = pill(p, 'камптотецин', COL.chalk, 280, 560, null, 22);
+    put(cp, { y: 540 }); tw(cp, { o: 1, y: 566 }, m('campt', 1.5), .6, back);
+    say(p, 'разрез + фермент', 280, 712, m('campt', 2.5), { size: 20, fill: COL.dim, weight: 600 });
+    const fk = G(p, { x: -40, o: 0 });
+    path(fk, `M90 ${cy3 - 40}L150 ${cy3 - 12}M90 ${cy3 + 40}L150 ${cy3 + 12}`, { stroke: COL.chalk, 'stroke-width': 6 });
+    show(fk, m('break')); tw(fk, { x: 80 }, m('break'), 1.2);
+    const bolt = G(p, { o: 0 });
+    path(bolt, `M288 ${cy3 - 46}L268 ${cy3 - 4}L292 ${cy3 + 2}L270 ${cy3 + 44}`, { stroke: NO, 'stroke-width': 6 });
+    show(bolt, m('break', 1.3));
+    say(p, 'двуцепочечный', 500, cy3 - 4, m('break', 1.5), { size: 24, fill: NO, weight: 700, anchor: 'start' });
+    say(p, 'разрыв', 500, cy3 + 28, m('break', 1.5), { size: 24, fill: NO, weight: 700, anchor: 'start' });
+    say(p, 'опухоли страдают сильнее', 500, 700, m('break', 4.3), { size: 20, fill: COL.dim, weight: 600, anchor: 'start' });
+    // reverse gyrase
+    card5(p, 820, 420, 720, 320, 'Обратная гираза термофилов', m('rev'));
+    say(p, '+  вносит положительные супервитки', 846, 520, m('rev', .5), { size: 24, weight: 600, anchor: 'start' });
+    say(p, 'зачем — гипотеза: перекрученная ДНК', 846, 570, m('rev', 3.8), { size: 22, fill: COL.dim, weight: 600, anchor: 'start' });
+    say(p, 'труднее плавится при 80–100 °C', 846, 602, m('rev', 3.8), { size: 22, fill: COL.dim, weight: 600, anchor: 'start' });
+    say(p, 'I тип + домен как у хеликазы', 846, 660, m('rev', 10.4), { size: 24, weight: 600, anchor: 'start' });
+    pill(p, 'АТФ', COL.int, 1230, 652, m('rev', 12), 22);
+    const th = G(p, { x: 1460, y: 560, o: 0 });
+    mk('rect', { x: -12, y: -70, width: 24, height: 130, rx: 12, fill: 'none', stroke: COL.chalk, 'stroke-width': 3 }, th);
+    mk('rect', { x: -6, y: -50, width: 12, height: 104, rx: 6, fill: NO }, th);
+    mk('circle', { cy: 74, r: 22, fill: NO, stroke: COL.chalk, 'stroke-width': 3 }, th);
+    T(th, '80–100 °C', { y: 138, size: 22, weight: 700, anchor: 'middle' });
+    show(th, m('rev', 3.8));
+  }],
+  ['family2', 'Ферменты II типа', (m) => {
+    const p = panel(0);
+    card5(p, 60, 60, 1480, 330, 'ДНК-гираза бактерий', m('gyr'));
+    const lobes = G(p, { x: 230, y: 250, o: 0 }), fB = mix(COL.board, PROT, .45), fA = mix(COL.board, PROT, .28);
+    [[-48, -46, fB], [48, -46, fB], [-48, 44, fA], [48, 44, fA]].forEach(([x, y, f]) => mk('ellipse', { cx: x, cy: y, rx: 46, ry: 42, fill: f, stroke: PROT, 'stroke-width': 3 }, lobes));
+    T(lobes, 'GyrB₂', { x: 0, y: -100, size: 22, fill: PROT, weight: 700, anchor: 'middle' });
+    T(lobes, 'GyrA₂', { x: 0, y: 118, size: 22, fill: PROT, weight: 700, anchor: 'middle' });
+    show(lobes, m('gyr', .4));
+    say(p, 'четыре субъединицы: GyrA₂GyrB₂', 400, 160, m('gyr', .6), { size: 24, weight: 600, anchor: 'start' });
+    say(p, 'единственная активно вносит отрицательные супервитки', 400, 205, m('gyr', 2.9), { size: 24, weight: 600, anchor: 'start' });
+    colorLine(p, [['за цикл: ΔL = '], ['−2', DNA], [' · 2 АТФ']], 400, 250, m('gyr', 5.5), { size: 26, anchor: 'start' });
+    say(p, 'снимает «+» впереди вилки · распутывает катенаны', 400, 295, m('ahead'), { size: 24, weight: 600, anchor: 'start' });
+    const fk = fork(p, 1140, 330, m('ahead'), { xEnd: 1510, A: 14, P: 44, n: 5, back: 110, spread: 26, hel: null });
+    void fk;
+    const pl = [1250, 1300, 1350, 1400].map(x => say(p, '+', x, 300, m('ahead'), { size: 30, weight: 700 }));
+    enzyme(p, 'гираза', 1460, 330, m('ahead', 1), { w: 90, h: 46, size: 18 });
+    pl.forEach((e, i) => hide(e, m('ahead', 2 + (i >> 1) * .8), .4));
+    card5(p, 60, 420, 720, 320, 'Topo IV', m('t4'));
+    say(p, 'расцепляет дочерние хромосомы', 86, 520, m('t4', .5), { size: 24, weight: 600, anchor: 'start' });
+    say(p, 'после репликации кольца продеты друг в друга', 86, 560, m('t4', 3.5), { size: 22, fill: COL.dim, weight: 600, anchor: 'start' });
+    catenane(p, 360, 655, m('t4', 3.5), { r: 56, d: 66, w: 8, col: [DNA, DNA] }).unlink(m('t4', 6), 180);
+    card5(p, 820, 420, 720, 320, 'Topo IIα и IIβ эукариот', m('euk'));
+    say(p, '±  снимает напряжение обоих знаков', 846, 520, m('euk', 1.5), { size: 24, weight: 600, anchor: 'start' });
+    say(p, 'разделяет сестринские хромосомы', 846, 560, m('euk', 4), { size: 24, weight: 600, anchor: 'start' });
+    const sis = [-1, 1].map(s => {
+      const g = G(p, { x: 1180, y: 655, o: 0 });
+      mk('rect', { x: s * 6 - (s < 0 ? 26 : 0), y: -70, width: 26, height: 140, rx: 13, fill: mix(COL.board, DNA, .3), stroke: DNA, 'stroke-width': 3 }, g);
+      show(g, m('euk', 4));
+      tw(g, { x: 1180 + s * 50 }, m('euk', 5.5), 1);
+      return g;
+    });
+    void sis;
+  }],
+  ['q3', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz(WIDE, [{
+    id: 'c-type', prompt: ['Какого типа каждый фермент?'], build: grid(Q_TYPE, [['1', 'I тип', null, '1'], ['2', 'II тип', null, '2']], { multi: false, text: true }),
+  }], done) }],
+  ['gyrase', 'Цикл гиразы', (m) => {
+    const p = panel(0), gx = 1080, gy = 440, L = gx + 300;
+    say(p, 'цикл гиразы', 96, 140, .2, { size: 30, fill: COL.dim, weight: 700, anchor: 'start' });
+    const hl = mk('rect', { x: 70, y: 0, width: 590, height: 52, rx: 14, fill: CARD, stroke: DNA, 'stroke-width': 2.5 }, p);
+    put(hl, { o: 0, y: 200 - 36 });
+    const st7 = STEPS.map((s, i) => say(p, `${i + 1}  ${s}`, 90, 200 + i * 72, .3 + i * .08, { size: 24, fill: COL.dim, weight: 600, anchor: 'start' }));
+    const step = (i, t) => { tw(hl, { o: 1, y: 200 + i * 72 - 36 }, t, .4); tw(st7[i], { c_fill: COL.chalk }, t, .3); };
+    const gb = gyrBody(p, gx, gy, .4);
+    put(gb.N[0], { r: -30 }); put(gb.N[1], { r: 30 });
+    say(p, 'N-ворота · GyrB', L, gy - 140, m('gates', 1), { size: 24, fill: PROT, weight: 700, anchor: 'start' });
+    say(p, 'ворота ДНК', L, gy - 46, m('gates', 2.6), { size: 24, fill: PROT, weight: 700, anchor: 'start' });
+    say(p, 'C-ворота · GyrA', L, gy + 160, m('gates', 4.2), { size: 24, fill: PROT, weight: 700, anchor: 'start' });
+    // G-segment halves and the T-segment
+    const gl = G(p, { o: 0 }), gr = G(p, { o: 0 });
+    dBar(gl, gx - 270, gy, gx, gy, COL.chalk, { head: false, halo: false }); dBar(gr, gx, gy, gx + 270, gy, COL.chalk, { head: false, halo: false });
+    show(gl, m('g')); show(gr, m('g'));
+    say(p, 'G', gx - 290, gy + 10, m('g'), { size: 30, weight: 700, anchor: 'end' });
+    step(0, m('g'));
+    draw(path(p, `M${gx - 270} ${gy}C${gx - 360} ${gy} ${gx - 300} ${gy - 300} ${gx - 34} ${gy - 300}`, { stroke: DNA, 'stroke-width': 4, 'stroke-dasharray': '8 8', opacity: .7 }, { d: 0 }), m('wrap', .5), 1.5);
+    const tS = tSeg(p, gx, gy - 300);
+    show(tS, m('wrap', 1.8));
+    say(p, 'ДНК', gx - 215, gy - 160, m('wrap', 1), { size: 22, fill: COL.dim, weight: 600 });
+    say(p, 'обёрнута', gx - 215, gy - 134, m('wrap', 1), { size: 22, fill: COL.dim, weight: 600 });
+    // 2: ATP, N-gate closes on T
+    step(1, m('atp'));
+    const atp = [-62, 62].map((dx, i) => pill(p, 'АТФ', COL.int, gx + dx, gy - 258, m('atp', .3 + i * .3), 20));
+    tw(tS, { y: gy - 150 }, m('atp', 1.2), 1);
+    gb.gate('N', false, m('atp', 2));
+    // 3: cut
+    step(2, m('cut'));
+    tw(gl, { x: -14 }, m('cut', .6), .5); tw(gr, { x: 14 }, m('cut', .6), .5);
+    const ty = [say(p, 'Tyr122', gx - 40, gy - 26, m('cut', 3), { size: 20, weight: 700, anchor: 'end' }), say(p, 'Tyr122', gx + 40, gy + 42, m('cut', 3), { size: 20, weight: 700, anchor: 'start' })];
+    // 4: pass
+    step(3, m('pass'));
+    gb.gate('D', true, m('pass')); tw(gl, { x: -86 }, m('pass'), .8); tw(gr, { x: 86 }, m('pass'), .8);
+    ty.forEach((e, i) => tw(e, { x: st(e).x + (i ? 72 : -72) }, m('pass'), .8));
+    tw(tS, { y: gy + 72 }, m('pass', .9), 1.4);
+    // 5: seal
+    step(4, m('seal'));
+    gb.gate('D', false, m('seal')); tw(gl, { x: 0 }, m('seal'), .8); tw(gr, { x: 0 }, m('seal'), .8);
+    ty.forEach(e => hide(e, m('seal', 1), .4));
+    // 6: out through the C-gate
+    step(5, m('out'));
+    gb.gate('C', true, m('out', .2)); tw(tS, { y: gy + 270 }, m('out', .7), 1.1); gb.gate('C', false, m('out', 2));
+    // 7: reset
+    step(6, m('reset'));
+    atp.forEach(e => hide(e, m('reset', .3), .4));
+    const adp = pill(p, '2 АДФ + 2 Фн', COL.int, gx, gy - 258, m('reset', .5), 20);
+    hide(adp, m('reset', 2.6), .4);
+    gb.gate('N', true, m('reset', 1.8));
+    colorLine(p, [['перекрёст '], ['+', DNA], [' → '], ['−', DNA], [':  ΔL = '], ['−2', DNA]], gx, 86, m('sum'), { size: 34 });
+  }],
+  ['q4', 'Быстрая проверка', () => {
+    const p = panel(0);
+    twistRing(p, 320, 470, .3, { A: 200, B: 200, twist: 24, w: 10, sw: 4, K: 600 });
+    say(p, '5250 п.н.', 320, 484, .4, { size: 36, weight: 700 });
+    colorLine(p, [['релаксированное: '], ['L₀ = 500', DNA]], 320, 160, .4, { size: 30 });
+    colorLine(p, [['цель: '], ['σ = −0,06', DNA]], 320, 210, .5, { size: 30 });
+  }, { ask: done => quiz({ x: 620, y: 150, w: 920, cls: 'side', maxH: 620 }, [{
+    id: 'c-gyr', prompt: ['Гираза доводит релаксированное кольцо до σ = −0,06. Сколько ей нужно циклов и молекул АТФ?'],
+    build: choice(['15 циклов, 30 АТФ', '30 циклов, 60 АТФ', '15 циклов, 15 АТФ', '3 цикла, 6 АТФ'], 0,
+      'ΔL = −0,06 × 500 = −30; за цикл −2, значит 15 циклов; по 2 АТФ на цикл — 30 АТФ.',
+      [null, 'За цикл гираза меняет L на 2, а не на 1: циклов вдвое меньше.', 'На один цикл уходят две молекулы АТФ.', '6 % — это доля от L₀, а не ΔL: ΔL = −0,06 × 500 = −30.']),
+  }], done) }],
+  ['rotation', 'Пять тысяч оборотов', (m) => {
+    const p = panel(0), y = 200;
+    const fk = fork(p, 420, y, .3, { xEnd: 1450, A: 26, P: 70, n: 6, back: 220, spread: 56 });
+    void fk;
+    say(p, '1000 нт/с', 420, 110, m('speed', 1), { size: 30, fill: DNA, weight: 700 });
+    arrowTo(p, 500, 102, 580, 102, DNA, m('speed', 1));
+    colorLine(p, [['1000 / 10,5 ≈ '], ['95', DNA], [' витков в секунду']], 800, 345, m('turns'), { size: 32 });
+    const plus = [560, 620, 680, 740].map(x => say(p, '+', x, 150, m('spin'), { size: 34, weight: 700 }));
+    const spinM = turnMark(p, 1500, y, 34, COL.chalk, m('spin'));
+    tw(spinM, { r: 1440 }, m('spin'), 9, lin);
+    hide(spinM, m('gyr'), .5);
+    const tc = tacho(p, 380, 570, 150, m('spin', 1));
+    tc.to(5700, m('spin', 2), 4);
+    say(p, 'если бы вращалась вся молекула:', 600, 520, m('spin', 1.5), { size: 24, fill: COL.dim, weight: 600, anchor: 'start' });
+    colorLine(p, [['95 × 60 ≈ '], ['5700', DNA], [' об/мин']], 600, 570, m('spin', 5.5), { size: 32, anchor: 'start' });
+    hdd(p, 1300, 590, m('disk'));
+    say(p, 'жёсткий диск: 5400–7200 об/мин', 1300, 440, m('disk', .3), { size: 24, weight: 600 });
+    say(p, 'а тут — огромная молекула в цитоплазме', 600, 620, m('disk', 2.5), { size: 22, fill: COL.dim, weight: 600, anchor: 'start' });
+    enzyme(p, 'гираза', 840, y, m('gyr'), { w: 130, h: 84 });
+    say(p, '−2 за цикл', 840, 122, m('gyr', 1), { size: 24, fill: PROT, weight: 700 });
+    plus.forEach((e, i) => hide(e, m('gyr', 2 + (i >> 1) * 1.2), .4));
+    tc.to(0, m('zero'), 1.5);
+    say(p, 'вращать ничего не нужно', 600, 670, m('zero', .5), { size: 26, fill: DNA, weight: 700, anchor: 'start' });
+  }],
+  ['drugs', 'Антибиотики против гиразы', (m) => {
+    const p = panel(0), y = 230;
+    fork(p, 380, y, .3, { xEnd: 1450, A: 26, P: 70, n: 6, back: 220, spread: 56 });
+    enzyme(p, 'гираза', 980, y, .4, { w: 160, h: 96 });
+    const atp = [935, 1025].map(xx => pill(p, 'АТФ', COL.int, xx, 318, .5, 20));
+    const nv = pill(p, 'новобиоцин', COL.chalk, 980, 110, null, 24);
+    put(nv, { y: 80 }); tw(nv, { o: 1, y: 140 }, m('novo', .5), .7, back);
+    say(p, 'блокирует АТФазу GyrB', 1180, 140, m('novo', 3), { size: 22, fill: COL.dim, weight: 600, anchor: 'start' });
+    atp.forEach(e => tw(e, { o: .2 }, m('novo', 3.5), .5));
+    [520, 600, 680, 760, 840].forEach((x, i) => say(p, '+', x, 160, m('stop', .3 + i * .4), { size: 34, weight: 700 }));
+    yesNo(p, false, 380, 110, m('stop', 2.5));
+    say(p, 'репликация остановлена', 380, 64, m('stop', 2.8), { size: 26, fill: NO, weight: 700 });
+    // quinolones freeze the cut complex
+    const yq = 530;
+    enzyme(p, null, 800, yq, m('quin'), { w: 200, h: 110 });
+    say(p, 'гираза', 800, yq + 92, m('quin'), { size: 24, fill: PROT, weight: 700 });
+    const h1 = G(p, { o: 0 });
+    dBar(h1, 480, yq, 788, yq, COL.chalk, { head: false, halo: false }); dBar(h1, 812, yq, 1120, yq, COL.chalk, { head: false, halo: false });
+    show(h1, m('quin', .3));
+    const qp = pill(p, 'хинолоны (ципрофлоксацин)', COL.chalk, 800, 415, null, 24);
+    put(qp, { y: 395 }); tw(qp, { o: 1, y: 428 }, m('quin', 1.5), .7, back);
+    say(p, 'фермент застывает с разрезанной ДНК', 800, 672, m('quin', 3.5), { size: 26, weight: 700 });
+    say(p, 'как камптотецин у Topo I эукариот', 800, 710, m('quin', 5), { size: 22, fill: COL.dim, weight: 600 });
+  }],
+  ['wrap', 'Итоги', (m) => {
+    const p = panel(0);
+    numbered(p, [
+      ['L = T + W; L меняется только через разрыв цепи', 'w1'],
+      ['σ = ΔL / L₀; у бактерий σ ≈ −0,06: ДНК недокручена, её легче расплести', 'w2'],
+      ['перед вилкой и РНК-полимеразой копятся положительные супервитки', 'w3'],
+      ['I тип: одна цепь, ΔL = ±1, без АТФ;  II тип: обе цепи, ΔL = ±2, с АТФ', 'w4'],
+    ], m, 170, 120, 30);
+    pill(p, 'гираза вносит отрицательные супервитки и снимает положительные перед вилкой', PROT, 800, 660, m('w4', 10.5), 26);
+  }],
+  ['final1', 'Практика главы', () => { panel(0); }, { ask: done => quiz(SCREEN, [{
+    id: 'p-num', prompt: ['Кольцо 3150 п.н., 10,5 п.н. на виток. Впишите числа.'], build: blanks(P_NUM),
+  }], done, 'Практика главы   1 из 3') }],
+  ['final2', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-tf', prompt: ['Верно или неверно?'], build: grid(P_TF, TF, { multi: false, text: true }),
+  }], done, 'Практика главы   2 из 3') }],
+  ['final3', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-enz', prompt: ['Какой это фермент?'],
+    build: grid(P_ENZ, [['b1', 'Topo I бактерий'], ['gyr', 'гираза'], ['t4', 'Topo IV'], ['e1', 'Topo I эукариот'], ['rg', 'обратная гираза']], { multi: false, text: true }),
+  }], done, 'Практика главы   3 из 3') }],
+  ['finish', 'Готово', () => {}, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+/* ---------- question data ---------- */
+const Q_LTW = [
+  { parts: ['L = 470, T = 500, значит W = ', { box: '−30' }], why: 'W = L − T = 470 − 500 = −30: ось свёрнута в 30 отрицательных супервитков.', hint: 'L = T + W, значит W = L − T.' },
+  { parts: ['Релаксированное кольцо 2100 п.н. (10,5 на виток): L₀ = ', { box: '200' }], why: '2100 / 10,5 = 200 витков, супервитков нет.', hint: 'Разделите длину на 10,5.' },
+  { parts: ['У того же кольца L = 188: ΔL = ', { box: '−12' }], why: '188 − 200 = −12; σ = −12 / 200 = −0,06, как у бактерий.', hint: 'ΔL = L − L₀.' },
+];
+const Q_TYPE = [
+  { parts: ['Topo I бактерий'], ans: ['1'], why: 'Режет одну цепь, снимает отрицательные супервитки.' },
+  { parts: ['Topo III'], ans: ['1'], why: 'Режет одну цепь и расцепляет катенаны.' },
+  { parts: ['Обратная гираза'], ans: ['1'], why: '«Гираза» в названии обманывает: она режет одну цепь, а АТФ тратит из-за домена как у хеликазы.' },
+  { parts: ['Topo I эукариот'], ans: ['1'], why: 'Режет одну цепь; разрезанная цепь проворачивается вокруг целой.' },
+  { parts: ['ДНК-гираза'], ans: ['2'], why: 'Режет обе цепи: ΔL = −2 за цикл, 2 АТФ.' },
+  { parts: ['Topo IV'], ans: ['2'], why: 'Режет обе цепи и расцепляет дочерние хромосомы.' },
+  { parts: ['Topo IIα эукариот'], ans: ['2'], why: 'Режет обе цепи, разделяет сестринские хромосомы.' },
+];
+const P_NUM = [
+  { parts: ['Релаксированное кольцо: L₀ = ', { box: '300' }], why: '3150 / 10,5 = 300.', hint: 'Разделите длину на 10,5.' },
+  { parts: ['Стало L = 282: ΔL = ', { box: '−18' }], why: '282 − 300 = −18.', hint: 'ΔL = L − L₀.' },
+  { parts: ['При L = 282 и T = 290: W = ', { box: '−8' }], why: 'W = L − T = 282 − 290 = −8.', hint: 'W = L − T.' },
+  { parts: ['Циклов гиразы, чтобы из релаксированного кольца получить L = 282: ', { box: '9' }], why: 'ΔL = −18, за цикл −2: 18 / 2 = 9.', hint: 'Один цикл гиразы меняет L на −2.' },
+  { parts: ['Закреплённый участок 2100 п.н. (L = 200), вилка прошла 210 п.н.: ΔL = ', { box: '+20' }], why: 'Осталось 1890 п.н. → 1890 / 10,5 = 180 витков, а L = 200: ΔL = 200 − 180 = +20.', hint: 'Сколько витков положено оставшимся 1890 п.н.?' },
+];
+const P_TF = [
+  { parts: ['L кольцевой ДНК можно изменить, не разрезая ни одной цепи.'], ans: ['f'], why: 'Без разрыва меняется только распределение между T и W.' },
+  { parts: ['T и W могут быть нецелыми, а L — всегда целое.'], ans: ['t'], why: 'Целой должна быть только сумма T + W.' },
+  { parts: ['Знак суперспирализации задаёт знак ΔL.'], ans: ['t'], why: 'ΔL < 0 — отрицательная, ΔL > 0 — положительная.' },
+  { parts: ['Отрицательно суперспирализованная ДНК энергетически выгоднее релаксированной.'], ans: ['f'], why: 'Она напряжена, как сжатая пружина; создать её стоит АТФ гиразы.' },
+  { parts: ['Перед движущейся вилкой накапливаются положительные супервитки.'], ans: ['t'], why: 'Зацеплений столько же, а нерасплетённых пар меньше: ΔL > 0.' },
+  { parts: ['Топоизомеразы I типа тратят АТФ в каждом цикле.'], ans: ['f'], why: 'Энергия хранится в связи Tyr–O–P; исключение — обратная гираза.' },
+  { parts: ['Обратная гираза относится ко II типу.'], ans: ['f'], why: 'К I типу (подтип IA): режет одну цепь.' },
+  { parts: ['Гираза — единственный фермент, который активно вносит отрицательные супервитки.'], ans: ['t'], why: 'ΔL = −2 за цикл ценой двух АТФ.' },
+];
+const P_ENZ = [
+  { parts: ['Снимает у бактерий только отрицательные супервитки'], ans: ['b1'], why: 'Topo I бактерий не даёт ДНК недокрутиться сильнее нормы.' },
+  { parts: ['Вносит отрицательные супервитки, расходуя АТФ'], ans: ['gyr'], why: 'Гираза: ΔL = −2 и 2 АТФ за цикл.' },
+  { parts: ['Разделяет дочерние хромосомы E. coli после репликации'], ans: ['t4'], why: 'Topo IV расцепляет кольца, продетые одно в другое.' },
+  { parts: ['Мишень камптотецина'], ans: ['e1'], why: 'Камптотецин задерживает Topo I эукариот на разрезанной ДНК.' },
+  { parts: ['Мишень новобиоцина'], ans: ['gyr'], why: 'Новобиоцин блокирует АТФазу GyrB.' },
+  { parts: ['Вносит положительные супервитки у термофилов'], ans: ['rg'], why: 'Обратная гираза: I тип с доменом как у хеликазы.' },
+];
+boot();
+</script>
+</body>
+</html>

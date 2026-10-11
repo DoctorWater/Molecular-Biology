@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Как копируется ДНК: три модели и один опыт — ДНК и её копирование</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d2b27'/%3E%3Cpath d='M12 24H52M12 34H52' stroke='%23ece8dc' stroke-width='6'/%3E%3Cpath d='M12 44H52' stroke='%23f0b45a' stroke-width='6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<script src="../lib/engine.js"></script>
+<script src="../lib/bio.js"></script>
+<script src="audio/ru/timings.js"></script>
+<script>
+'use strict';
+const CHAPTER = { number: 6, title: 'Как копируется ДНК: три модели и один опыт', minutes: 10, language: 'ru' };
+
+/* ---------- chapter drawing helpers (shared ones: lib/bio.js) ---------- */
+const o = 'old', n = 'new', O4 = [o, o, o, o], N4 = [n, n, n, n];
+// The experiment layout: three model columns, an optional experiment tube, molecule rows, gradient tubes (rim TR, TH deep).
+const X3 = [330, 760, 1190], XE = 1460, MY = [200, 290], TR = 370, TH = 300;
+const KEYS = ['cons', 'semi', 'disp'], MODELS = ['консервативная', 'полуконсервативная', 'дисперсная'];
+// Densities, g/cm³: T heavy ¹⁵N, P hybrid, L light ¹⁴N, Q the dispersive molecule of generation 2 (¼ ¹⁵N).
+const RHO = { T: 1.724, P: 1.717, L: 1.710, Q: 1.7135 };
+const LET = { T: 'Т', P: 'П', L: 'Л' };
+const fmt = v => v.toFixed(3).replace('.', ',');
+const BANDCOL = { T: COL.chalk, P: mix(COL.chalk, DNA, .5), L: DNA, Q: mix(DNA, COL.chalk, .25) };
+// Density → depth below the rim of a TH-deep tube, linear: 1,710 at 110, 1,724 at 230 (the gradient stretched).
+const depthOf = rho => 110 + (rho - 1.710) / .014 * 120;
+// Molecules of each model by generation: [dx from the column centre, row, top strand, bottom strand].
+const MOLS = {
+  cons: [[[0, 0, O4, O4]], [[-90, 0, O4, O4], [90, 0, N4, N4]], [[-90, 0, O4, O4], [90, 0, N4, N4], [-90, 1, N4, N4], [90, 1, N4, N4]]],
+  semi: [[[0, 0, O4, O4]], [[-90, 0, O4, N4], [90, 0, N4, O4]], [[-90, 0, O4, N4], [90, 0, N4, O4], [-90, 1, N4, N4], [90, 1, N4, N4]]],
+  disp: [[[0, 0, O4, O4]], [[-90, 0, [o, n, o, n], [n, o, n, o]], [90, 0, [n, o, n, o], [o, n, o, n]]],
+    [[-90, 0, [o, n, n, n], [n, n, o, n]], [90, 0, [n, n, o, n], [n, o, n, n]], [-90, 1, [n, o, n, n], [n, n, n, o]], [90, 1, [n, n, n, o], [o, n, n, n]]]],
+};
+// Bands by generation: [kind, fraction of the molecules]; the band thickness follows the fraction.
+const BANDS = {
+  cons: [[['T', 1]], [['T', .5], ['L', .5]], [['T', .25], ['L', .75]]],
+  semi: [[['T', 1]], [['P', 1]], [['P', .5], ['L', .5]]],
+  disp: [[['T', 1]], [['P', 1]], [['Q', 1]]],
+};
+const EXP = BANDS.semi;
+const strike = (p, x1, x2, y, t0) => draw(path(p, `M${x1} ${y}H${x2}`, { stroke: NO, 'stroke-width': 5 }, { d: 0 }), t0, .4);
+// Gradient in a tube: n layers from the liquid surface (depth top) down, denser (more opaque) towards the bottom.
+function grad(t, at, h, { top = 40, n = 7, k0 = .04, k1 = .34, r = 45 } = {}) {
+  const lo = h - r, L = [];
+  for (let k = 0; k < n; k++) {
+    const y1 = top + k * (lo - top) / (n - 1), y2 = k < n - 1 ? top + (k + 1) * (lo - top) / (n - 1) : h;
+    L.push(t.fill(y1, y2, COL.dim, at, k0 + k * (k1 - k0) / (n - 1)));
+  }
+  return L;
+}
+// A band of kind T/P/L/Q at its depth; thickness 6 + 14·fraction. A hybrid band is two-tone: half old, half new.
+function bandOf(t, kind, f, at, dep = depthOf) {
+  const d = dep(RHO[kind]), th = 6 + 14 * f;
+  if (kind === 'P') return [t.band(d - th / 4, COL.chalk, at, th / 2), t.band(d + th / 4, DNA, at, th / 2)];
+  return [t.band(d, BANDCOL[kind], at, th)];
+}
+function genPill(p, k, t) { return pill(p, `поколение ${k}`, COL.chalk, 800, 48, t, 26); }
+// The density scale on the left with dashed level guides across to xEnd.
+function expBase(p, t0, xEnd = 1250) {
+  const g = G(p, { o: 0 }), y = k => TR + depthOf(RHO[k]);
+  ['L', 'P', 'T'].forEach(k => {
+    path(g, `M190 ${y(k)}H${xEnd}`, { stroke: COL.faint, 'stroke-width': 2, 'stroke-dasharray': '6 8' });
+    path(g, `M175 ${y(k)}H190`, { stroke: COL.dim, 'stroke-width': 3 });
+    T(g, fmt(RHO[k]), { x: 164, y: y(k) + 8, size: 22, fill: COL.dim, weight: 600, anchor: 'end' });
+    T(g, LET[k], { x: 202, y: y(k) - 8, size: 22, fill: BANDCOL[k], weight: 700 });
+  });
+  path(g, `M175 ${y('L') - 40}V${y('T') + 40}`, { stroke: COL.dim, 'stroke-width': 3 });
+  T(g, 'г/см³', { x: 175, y: y('L') - 54, size: 22, fill: COL.dim, weight: 600, anchor: 'middle' });
+  T(g, 'масштаб', { x: 110, y: TR + 4, size: 20, fill: COL.dim, anchor: 'middle' });
+  T(g, 'растянут', { x: 110, y: TR + 28, size: 20, fill: COL.dim, anchor: 'middle' });
+  show(g, t0);
+  return g;
+}
+// One model column: title, molecules (.mols), a gradient tube with bands (.setBands); .out(t) dims and crosses it, .ok(t) frames it.
+function modelCol(p, i, t0, { out = false } = {}) {
+  const x = X3[i], g = G(p, { o: 0 }), c = { g, x, key: KEYS[i], pairs: [], bands: [] };
+  T(g, MODELS[i], { x, y: 118, size: 30, weight: 700, anchor: 'middle' });
+  c.tube = tube(g, x, TR, t0, { w: 90, h: TH });
+  grad(c.tube, t0, TH);
+  tw(g, { o: out ? .3 : 1 }, t0, .5);
+  const cross = G(p, { o: 0 });
+  path(cross, `M${x - 170} 150L${x + 170} 680M${x + 170} 150L${x - 170} 680`, { stroke: NO, 'stroke-width': 6 });
+  if (out) show(cross, t0);
+  c.mols = (gen, t) => { c.pairs = MOLS[c.key][gen].map(([dx, row, top, bot]) => dsIcon(g, x + dx, MY[row], top, bot, t)); return c.pairs; };
+  c.setBands = (list, t) => {
+    c.bands.forEach(arr => arr.forEach(e => hide(e, t, .4)));
+    c.bands = list.map(([k, f]) => bandOf(c.tube, k, f, t + .2));
+  };
+  c.out = t => { tw(g, { o: .3 }, t, .6); show(cross, t + .3, .4); };
+  c.ok = t => {
+    const e = mk('rect', { x: x - 205, y: 80, width: 410, height: 610, rx: 22, fill: 'none', stroke: OK, 'stroke-width': 4 }, p);
+    put(e, { o: 0 }); show(e, t);
+    pill(p, 'совпадает во всех поколениях', OK, x, 716, t + .4, 24);
+  };
+  return c;
+}
+// The experiment tube on the right with its bands.
+function expTube(p, t0, list, tb = t0) {
+  const g = G(p);
+  say(g, 'опыт', XE, 118, t0, { size: 30, fill: DNA, weight: 700 });
+  const t = tube(g, XE, TR, t0, { w: 90, h: TH });
+  grad(t, t0, TH);
+  g.tube = t;
+  g.bands = list.map(([k, f]) => bandOf(t, k, f, tb));
+  return g;
+}
+// The whole layout of one generation, drawn at t0.
+function expScene(p, gen, t0, { out = [], exp = null } = {}) {
+  expBase(p, t0, exp == null ? 1250 : 1520);
+  const cols = [0, 1, 2].map(i => {
+    const c = modelCol(p, i, t0, { out: out.includes(i) });
+    c.mols(gen, null);
+    c.setBands(BANDS[c.key][gen], t0 - .2);
+    return c;
+  });
+  if (exp != null) cols.exp = expTube(p, t0, EXP[exp]);
+  return cols;
+}
+// Dispersive copying: the old pieces of the source molecules spread apart (cut), fly into the old slots of the new molecules
+// (mixed across them), and the new molecules fade in around them. src: dsIcon groups at fixed places; dst: [{x, y, top, bot}].
+function scatter(p, src, dst, t, { w = 140, gap = 22, cut = .5 } = {}) {
+  const pw = w / 4, slots = [];
+  const outs = dst.map(d => {
+    const q = dsIcon(p, d.x, d.y, d.top, d.bot, null, { w, gap });
+    put(q, { o: 0 });
+    q.pieces.forEach((line, li) => line.forEach((e, k) => {
+      if (e.kind === o) { put(e, { o: 0 }); slots.push([d.x - w / 2 + k * pw, d.y + (li ? 1 : -1) * gap / 2]); }
+    }));
+    return q;
+  });
+  let s = 0;
+  const N = slots.length;
+  src.forEach(g => {
+    hide(g.rungs, t, .3);
+    g.pieces.forEach((line, li) => line.forEach((e, k) => {
+      if (e.kind !== o) { hide(e, t, .3); return; }
+      const [sx, sy] = slots[(s * 3) % N], x0 = -w / 2 + k * pw;
+      tw(e, { x: x0 + (k - 1.5) * 9 }, t, cut);
+      tw(e, { x: sx - g.px, y: sy - g.py - (li ? 1 : -1) * gap / 2 }, t + cut + .2 + s * .06, 1.2);
+      s++;
+    }));
+  });
+  outs.forEach(q => show(q, t + cut + 1.9, .5));
+  return outs;
+}
+// Transitions of a model column between generations (pairs drawn by c.mols at fixed places).
+function cons01(c, t1, t2) {
+  tw(c.pairs[0], { x: c.x - 90 }, t1, 1);
+  dsIcon(c.g, c.x + 90, MY[0], N4, N4, t2);
+}
+function cons12(c, t) { [-90, 90].forEach((dx, k) => dsIcon(c.g, c.x + dx, MY[1], N4, N4, t + k * .4)); }
+// Hidden parts of a new pair: lines already covered by moved strands; the rest appears at t.
+function partner(c, dx, row, top, bot, keep, t) {
+  const q = dsIcon(c.g, c.x + dx, MY[row], top, bot, null);
+  [q.top, q.bot, q.rungs].forEach(e => put(e, { o: 0 }));
+  const nw = keep === 'top' ? q.bot : q.top;
+  show(nw, t, .6); show(q.rungs, t + .3, .4);
+  return q;
+}
+function semi01(c, t1, t2) {
+  const s = c.pairs[0];
+  hide(s.rungs, t1, .3);
+  tw(s.top, { x: -90 }, t1 + .2, 1.2); tw(s.bot, { x: 90 }, t1 + .2, 1.2);
+  partner(c, -90, 0, O4, N4, 'top', t2);
+  partner(c, 90, 0, N4, O4, 'bot', t2 + .3);
+}
+function semi12(c, t1, t2, t3) {
+  const [a, b] = c.pairs;
+  hide(a.rungs, t1, .3); hide(b.rungs, t1, .3);
+  tw(a.bot, { y: 11 + 90 }, t1 + .2, 1.2); tw(b.top, { y: -11 + 90 }, t1 + .2, 1.2);
+  partner(c, -90, 0, O4, N4, 'top', t2); partner(c, 90, 0, N4, O4, 'bot', t2 + .3);
+  partner(c, -90, 1, N4, N4, 'bot', t3); partner(c, 90, 1, N4, N4, 'top', t3 + .3);
+}
+const dstOf = (c, gen) => MOLS.disp[gen].map(([dx, row, top, bot]) => ({ x: c.x + dx, y: MY[row], top, bot }));
+const disp01 = (c, t) => scatter(c.g, c.pairs, dstOf(c, 1), t);
+const disp12 = (c, t) => scatter(c.g, c.pairs, dstOf(c, 2), t);
+
+// Small pictures: the radioactivity sign, a balance, a nucleus, a flask, a centrifuge rotor, a flame.
+function trefoil(p, x, y, t0) {
+  const g = G(p, { x, y, o: 0 }), pt = (a, r) => `${(r * Math.cos(a * Math.PI / 180)).toFixed(1)} ${(r * Math.sin(a * Math.PI / 180)).toFixed(1)}`;
+  mk('circle', { r: 58, fill: CARD, stroke: COL.int, 'stroke-width': 3 }, g);
+  [-90, 30, 150].forEach(a => mk('path', { d: `M${pt(a - 30, 13)}L${pt(a - 30, 46)}A46 46 0 0 1 ${pt(a + 30, 46)}L${pt(a + 30, 13)}A13 13 0 0 0 ${pt(a - 30, 13)}Z`, fill: COL.int }, g));
+  mk('circle', { r: 8, fill: COL.int }, g);
+  show(g, t0);
+  return g;
+}
+function scales(p, x, y, t0) {
+  const g = G(p, { x, y, o: 0 }), ln = { stroke: COL.chalk, 'stroke-width': 4 };
+  path(g, 'M0 -60V44M-40 44H40', ln);
+  const beam = G(g, { y: -52, r: -8 });
+  path(beam, 'M-80 0H80', ln);
+  [[-80, COL.chalk, 26], [80, DNA, 18]].forEach(([px, c, s]) => {
+    const pan = G(beam, { x: px, r: 8 });
+    path(pan, 'M0 0L-28 46M0 0L28 46M-34 46H34', { stroke: COL.dim, 'stroke-width': 3 });
+    mk('rect', { x: -s / 2, y: 46 - s, width: s, height: s, rx: 3, fill: c }, pan);
+  });
+  show(g, t0);
+  return g;
+}
+// A nucleus of np protons and nn neutrons packed in a spiral; .extra — the last neutron (the 15th particle of ¹⁵N).
+function nucleus(p, x, y, np, nn, t0) {
+  const g = G(p, { x, y, o: 0 }), tot = np + nn, kinds = [];
+  for (let k = 0; k < tot; k++) kinds.push(k < 2 * Math.min(np, nn) ? (k % 2 ? 'n' : 'p') : (np > nn ? 'p' : 'n'));
+  const balls = [];
+  for (let k = tot - 1; k >= 0; k--) {
+    const r = 12 * Math.sqrt(k + .5), a = k * 2.39996, b = G(g, { x: r * Math.cos(a), y: r * Math.sin(a) });
+    mk('circle', { r: 14, fill: kinds[k] === 'p' ? COL.nat : COL.dim, stroke: COL.board, 'stroke-width': 2.5 }, b);
+    balls[k] = b;
+  }
+  g.extra = balls[tot - 1];
+  show(g, t0);
+  return g;
+}
+function flask(p, x, y, t0, label, liq) {
+  const g = G(p, { x, y, o: 0 });
+  mk('path', { d: 'M-68 -6L-22 -80H22L68 -6Z', fill: liq, 'fill-opacity': .3 }, g);
+  path(g, 'M-18 -150V-90L-80 0H80L18 -90V-150M-28 -150H28', { stroke: COL.chalk, 'stroke-width': 4 });
+  T(g, label, { y: -26, size: 30, fill: liq, weight: 700, anchor: 'middle' });
+  show(g, t0);
+  return g;
+}
+// A bacterial cell with one DNA molecule inside (dsIcon strands top/bot).
+function cell(p, x, y, top, bot, t0) {
+  const g = G(p, { x, y, o: 0 });
+  mk('ellipse', { rx: 86, ry: 46, fill: mix(COL.board, COL.dim, .12), stroke: COL.dim, 'stroke-width': 3 }, g);
+  dsIcon(g, 0, 0, top, bot, null, { w: 100, gap: 18, sw: 7 });
+  show(g, t0);
+  return g;
+}
+function rotor(p, x, y, t0) {
+  const g = G(p, { x, y, o: 0 }), R = G(g);
+  mk('circle', { r: 76, fill: CARD, stroke: COL.chalk, 'stroke-width': 4 }, R);
+  [0, 90, 180, 270].forEach(a => {
+    const s = G(R, { r: a });
+    mk('rect', { x: 22, y: -10, width: 46, height: 20, rx: 10, fill: mix(COL.board, COL.dim, .4), stroke: COL.dim, 'stroke-width': 2.5 }, s);
+  });
+  mk('circle', { r: 10, fill: COL.dim }, R);
+  g.R = R;
+  show(g, t0);
+  return g;
+}
+function flame(p, x, y, t0) {
+  const g = G(p, { x, y, o: 0 });
+  mk('path', { d: 'M0 0C-34 -6 -30 -44 -4 -74C-2 -50 30 -46 24 -16C20 -2 10 2 0 0Z', fill: COL.int, stroke: COL.nat, 'stroke-width': 3 }, g);
+  show(g, t0);
+  return g;
+}
+
+/* ---------- beats: [id, title, run(m, D), { ask }?] ---------- */
+const BEATS = [
+  ['intro', 'Как копируется ДНК: три модели и один опыт', (m, D) => {
+    const g = G(scene, { o: 0, y: 24 });
+    T(g, 'Раздел 2 «Репликация ДНК у прокариот» · Глава 6', { x: 800, y: 330, size: 28, fill: COL.dim, anchor: 'middle' });
+    T(g, 'Как копируется ДНК', { x: 800, y: 440, size: 70, weight: 600, anchor: 'middle' });
+    tw(g, { o: 1, y: 0 }, .2, 1.1, out);
+    const r = say(scene, 'три модели и один опыт', 800, 540, m('sub'), { size: 36, fill: COL.dim });
+    tw(g, { o: 0, y: -24 }, D - .9, .8); hide(r, D - .9, .8);
+  }],
+  ['guess', 'Догадка Уотсона и Крика', (m) => {
+    const p = panel(0), sq = 'ATGCGC', dx = 80, r = 20, opt = { dx, r, gap: 240 };
+    const q = G(p, { o: 0 });
+    mk('rect', { x: 160, y: 50, width: 1280, height: 92, rx: 18, fill: CARD, stroke: COL.dim, 'stroke-width': 2 }, q);
+    T(q, '«по каждой из разделённых цепей можно достроить недостающую половину»', { x: 800, y: 106, size: 28, weight: 600, anchor: 'middle' });
+    T(q, 'глава 3', { x: 1420, y: 176, size: 22, fill: COL.dim, anchor: 'end' });
+    show(q, .2);
+    // left molecule: parental top + new lower strand; right: new top + parental lower; at first the parental strands sit together
+    const gL = G(p, { x: 320 }), gR = G(p, { x: -320 });
+    const L = duplex(gL, sq, 280, 240, .4, { ...opt, t1: null, col: [COL.chalk, DNA] });
+    const R = duplex(gR, sq, 920, 240, null, { ...opt, t1: null, col: [DNA, COL.chalk] });
+    R.bot.units.forEach(u => show(u, .4, .4)); show(R.bot.end3, .4); show(R.bot.end5, .4);
+    L.bonds.forEach(b => show(b, .6, .4));
+    const t = m('split');
+    L.bonds.forEach(b => hide(b, t, .3));
+    tw(gL, { y: -30 }, t + .2, .5); tw(gR, { y: 30 }, t + .2, .5);
+    tw(gL, { x: 0 }, t + .7, 1.3); tw(gR, { x: 0 }, t + .7, 1.3);
+    tw(gL, { y: 0 }, t + 2, .5); tw(gR, { y: 0 }, t + 2, .5);
+    const t2 = t + 2.6;
+    [...sq].forEach((b, i) => {
+      show(L.at(i), t2 + i * .3, .4); show(L.bonds[i], t2 + i * .3 + .2, .3);
+      show(R.top.units[i], t2 + i * .3, .4); show(R.bonds[i], t2 + i * .3 + .2, .3);
+    });
+    [L.bot.end3, L.bot.end5, R.top.end5, R.top.end3].forEach(e => show(e, t2 + 1.6));
+    say(p, 'старая', 160, 250, t + 1.6, { size: 26, fill: COL.chalk, weight: 600, anchor: 'end' });
+    say(p, 'новая', 160, 490, t2, { size: 26, fill: DNA, weight: 600, anchor: 'end' });
+    say(p, 'новая', 1440, 250, t2, { size: 26, fill: DNA, weight: 600, anchor: 'start' });
+    say(p, 'старая', 1440, 490, t + 1.6, { size: 26, fill: COL.chalk, weight: 600, anchor: 'start' });
+    pill(p, 'догадка ≠ доказательство', COL.int, 800, 590, m('doubt'), 28);
+    [560, 700, 840].forEach((x, i) => pill(p, '?', COL.chalk, x, 690, m('three', .4 + i * .3), 34));
+    arrowTo(p, 900, 690, 980, 690, COL.dim, m('one'));
+    pill(p, 'один опыт', DNA, 1090, 690, m('one', .3), 30);
+  }],
+  ['models', 'Три модели', (m) => {
+    const p = panel(0), X = [300, 800, 1300], W = { w: 160 };
+    const lg = G(p, { o: 0 });
+    path(lg, 'M90 70H150', { stroke: COL.chalk, 'stroke-width': 8, 'stroke-linecap': 'butt' });
+    path(lg, 'M90 112H150', { stroke: DNA, 'stroke-width': 8, 'stroke-linecap': 'butt' });
+    T(lg, 'старая (родительская) цепь', { x: 168, y: 78, size: 24, fill: COL.chalk, weight: 600 });
+    T(lg, 'новая цепь', { x: 168, y: 120, size: 24, fill: DNA, weight: 600 });
+    show(lg, .2);
+    dsIcon(p, 800, 110, O4, O4, .3, W);
+    say(p, 'родительская молекула', 800, 170, .5, { size: 24, fill: COL.dim, weight: 600 });
+    say(p, 'одна → две', 1060, 120, .9, { size: 28, weight: 700, anchor: 'start' });
+    const copy = (x, t) => { const c = dsIcon(p, 800, 110, O4, O4, t, W); tw(c, { x, y: 380 }, t + .3, 1.1); c.px = x; c.py = 380; return c; };
+    const sub = (i, a, b, t) => { say(p, a, X[i], 572, t, { size: 24, weight: 600 }); say(p, b, X[i], 604, t + .2, { size: 24, weight: 600 }); };
+    // conservative
+    say(p, MODELS[0], X[0], 270, m('cons'), { size: 32, weight: 700 });
+    copy(X[0], m('cons', .2));
+    dsIcon(p, X[0], 480, N4, N4, m('consnew'), W);
+    sub(0, 'одна целиком старая,', 'другая целиком новая', m('consnew', 1));
+    // semiconservative: the copy's lower strand slides down and each old strand gets a new partner
+    say(p, MODELS[1], X[1], 270, m('semi'), { size: 32, weight: 700 });
+    const s = copy(X[1], m('semi', .2));
+    hide(s.rungs, m('semi', 1.5), .3); tw(s.bot, { y: 111 }, m('semi', 1.6), 1);
+    const A = dsIcon(p, X[1], 380, O4, N4, null, W), B = dsIcon(p, X[1], 480, N4, O4, null, W);
+    [A.top, A.bot, A.rungs, B.top, B.bot, B.rungs].forEach(e => put(e, { o: 0 }));
+    [A.bot, A.rungs, B.top, B.rungs].forEach((e, k) => show(e, m('seminew', k % 2 * .3 + (k > 1 ? .4 : 0)), .6));
+    sub(1, 'в каждой одна старая', 'и одна новая цепь', m('seminew', 1.5));
+    pill(p, 'догадка Уотсона и Крика', DNA, X[1], 660, m('seminew', 5), 26);
+    // dispersive
+    say(p, MODELS[2], X[2], 270, m('disp'), { size: 32, weight: 700 });
+    const d = copy(X[2], m('disp', .2));
+    scatter(p, [d], [{ x: X[2], y: 380, top: [o, n, o, n], bot: [n, o, n, o] }, { x: X[2], y: 480, top: [n, o, n, o], bot: [o, n, o, n] }],
+      m('disp', 1.6), { w: 160, cut: m('dispmix') - m('disp', 1.6) });
+    sub(2, 'старые куски в обеих', 'цепях обеих молекул', m('dispmix', 2.4));
+    colorLine(p, [['как отличить '], ['старую цепь', COL.chalk], [' от '], ['новой', DNA], ['?']], 800, 730, m('need', 2.5), { size: 32 });
+  }],
+  ['q1', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz(WIDE, [{
+    id: 'c-model', prompt: ['Узнайте модель по описанию.'],
+    build: grid(Q_MODEL, MCOLS, { multi: false, text: true }),
+  }], done) }],
+  ['label', '1958: метка массой', (m) => {
+    const p = panel(0);
+    yearTag(p, '1958', 'Мэтью Мезельсон, Франклин Сталь', .2);
+    trefoil(p, 230, 290, m('mass'));
+    draw(path(p, 'M170 230L290 350', { stroke: NO, 'stroke-width': 7 }, { d: 0 }), m('mass', 1.6), .4);
+    say(p, 'радиоактивная метка', 230, 400, m('mass', .4), { size: 26, weight: 600 });
+    say(p, 'плотность почти та же', 230, 434, m('mass', 2.6), { size: 24, fill: COL.dim, weight: 600 });
+    scales(p, 560, 300, m('mass', 1.2));
+    say(p, 'метка массой', 560, 400, m('mass', 1.5), { size: 26, fill: DNA, weight: 600 });
+    // adenine with its nitrogen atoms
+    const R = 44, ax = 1150, ay = 300;
+    baseRings(p, 'A', ax, ay, m('nitro'), { R });
+    path(p, `M${ax} ${ay - R}V${ay - 1.7 * R}`, { stroke: BASE.A, 'stroke-width': 4 }, { o: 0 });
+    show(p.lastChild, m('nitro'));
+    [[-1.817, .809], [-1.817, -.809], [0, 1], [.866, -.5], [0, -1.95]].forEach(([u, v], k) => {
+      const a = atom(p, 'N', ax + u * R, ay + v * R, { fill: COL.whole, size: 26, o: 0 });
+      put(a, { s: .6 }); pop(a, m('nitro', .6 + k * .2));
+    });
+    say(p, 'в каждом нуклеотиде есть атомы азота', 1060, 420, m('nitro', 1), { size: 26, weight: 600 });
+    // the two isotopes
+    say(p, '¹⁴N — лёгкий', 420, 500, m('light'), { size: 32, fill: DNA, weight: 700 });
+    nucleus(p, 420, 590, 7, 7, m('light', .3));
+    say(p, '7 протонов + 7 нейтронов', 420, 690, m('light', .8), { size: 24, fill: COL.dim, weight: 600 });
+    say(p, '¹⁵N — тяжёлый', 980, 500, m('heavy'), { size: 32, fill: COL.chalk, weight: 700 });
+    const h = nucleus(p, 980, 590, 7, 8, m('heavy', .3));
+    say(p, '7 протонов + 8 нейтронов', 980, 690, m('heavy', .8), { size: 24, fill: COL.dim, weight: 600 });
+    [0, 1, 2].forEach(k => pulse(h.extra, m('heavy', 4.2 + k * .8), 1.5));
+    pill(p, 'стабилен', OK, 1250, 590, m('heavy', 3), 28);
+    const lg = G(p, { o: 0 });
+    mk('circle', { cx: 1410, cy: 560, r: 13, fill: COL.nat }, lg);
+    mk('circle', { cx: 1410, cy: 606, r: 13, fill: COL.dim }, lg);
+    T(lg, 'протон', { x: 1434, y: 568, size: 22, fill: COL.dim, weight: 600 });
+    T(lg, 'нейтрон', { x: 1434, y: 614, size: 22, fill: COL.dim, weight: 600 });
+    show(lg, m('light', .6));
+  }],
+  ['setup', 'Опыт в три шага', (m) => {
+    const p = panel(0), xs = [80, 570, 1060];
+    const step = (i, title, t) => {
+      const g = G(p, { x: -16, o: 0 });
+      mk('rect', { x: xs[i], y: 150, width: 460, height: 500, rx: 20, fill: 'none', stroke: COL.faint, 'stroke-width': 2 }, g);
+      mk('circle', { cx: xs[i] + 44, cy: 200, r: 24, fill: DNA }, g);
+      T(g, String(i + 1), { x: xs[i] + 44, y: 210, size: 28, fill: COL.board, weight: 700, anchor: 'middle' });
+      T(g, title, { x: xs[i] + 82, y: 210, size: 26, weight: 700 });
+      tw(g, { o: 1, x: 0 }, t, .6);
+    };
+    say(p, 'E. coli', 800, 100, .3, { size: 32, fill: COL.dim, weight: 600 });
+    step(0, 'среда с ¹⁵N', m('grow'));
+    flask(p, 210, 560, m('grow', .5), '¹⁵N', COL.chalk);
+    cell(p, 410, 360, O4, O4, m('grow', 2));
+    say(p, 'много поколений', 210, 610, m('grow', 1.2), { size: 24, fill: COL.dim, weight: 600 });
+    say(p, 'вся ДНК тяжёлая', 410, 450, m('grow', 4.5), { size: 24, fill: COL.chalk, weight: 600 });
+    step(1, 'перенос в среду с ¹⁴N', m('move'));
+    arrowTo(p, 300, 470, 640, 470, COL.dim, m('move', .5), true);
+    flask(p, 710, 560, m('move', .8), '¹⁴N', DNA);
+    cell(p, 900, 360, O4, N4, m('move', 3));
+    say(p, 'новая цепь лёгкая', 900, 450, m('move', 3.5), { size: 24, fill: DNA, weight: 600 });
+    step(2, 'пробы ДНК', m('samples'));
+    ['0', '1', '2'].forEach((s, k) => {
+      const t = tube(p, 1160 + k * 130, 300, m('samples', .5 + k * .4), { w: 70, h: 220 });
+      t.fill(60, 220, COL.dim, m('samples', .7 + k * .4), .18);
+      say(p, s, 1160 + k * 130, 570, m('samples', .7 + k * .4), { size: 28, weight: 700 });
+    });
+    say(p, 'поколение', 1290, 620, m('samples', .7), { size: 24, fill: COL.dim, weight: 600 });
+  }],
+  ['gradient', 'Градиент плотности', (m) => {
+    const p = panel(0), x = 600, top = 140, h = 560, X = 900;
+    say(p, 'раствор CsCl', x, 110, m('tube'), { size: 28, weight: 600 });
+    const t = tube(p, x, top, m('tube'), { w: 160, h });
+    const lay = grad(t, m('tube', .3), h, { top: 40, n: 9, k0: .12, k1: .12, r: 80 });
+    lay.forEach((e, k) => tw(e, { 'a_fill-opacity': .03 + k * .045 }, m('spin', 1 + k * .25), 3));
+    const rot = rotor(p, 250, 330, m('spin'));
+    say(p, 'центрифуга', 250, 450, m('spin', .2), { size: 26, fill: COL.dim, weight: 600 });
+    prog(q => put(rot.R, { r: q * 360 * 14 }), m('spin'), m('band') - m('spin') + 1.5, io);
+    arrowTo(p, 730, 430, 730, 640, COL.dim, m('spin', 4));
+    say(p, 'плотнее', 750, 650, m('spin', 4), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    arrowTo(p, 730, 390, 730, 190, COL.dim, m('spin', 4.6));
+    say(p, 'легче', 750, 196, m('spin', 4.6), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    say(p, 'внизу плотнее, вверху легче', X, 260, m('spin', 3), { size: 28, weight: 600, anchor: 'start' });
+    say(p, 'градиент плотности', X, 304, m('spin', 6), { size: 30, fill: DNA, weight: 700, anchor: 'start' });
+    // molecules settle where the solution is as dense as they are (depth 300)
+    const yb = top + 300, dot = (dx, y0, t0) => { const d = G(p, { x: x + dx, y: y0, o: 0 }); mk('circle', { r: 11, fill: DNA }, d); show(d, t0, .3); return d; };
+    const d1 = dot(-24, top + 60, m('sink'));
+    tw(d1, { y: yb }, m('sink', .3), m('stop') - m('sink'), out);
+    say(p, 'тонет или всплывает', X, 400, m('sink'), { size: 28, weight: 600, anchor: 'start' });
+    say(p, 'до слоя своей плотности — и стоп', X, 444, m('stop'), { size: 28, weight: 600, anchor: 'start' });
+    const d2 = dot(24, top + h - 30, m('demo', .5));
+    tw(d2, { y: yb }, m('demo', 2), 5, out);
+    say(p, 'у дна слишком плотно → всплывает', X, 520, m('demo', 1), { size: 28, weight: 600, anchor: 'start' });
+    const more = [[-50, 120], [50, 200], [-10, 520], [40, 470], [-56, 420], [6, 150]].map(([dx, y0], k) => {
+      const d = dot(dx, top + y0, m('demo', 4 + k * .2));
+      tw(d, { y: yb }, m('demo', 4.4 + k * .2), 3.4, out);
+      return d;
+    });
+    t.band(300, DNA, m('band'), 14);
+    [d1, d2, ...more].forEach(d => hide(d, m('band', .3), .5));
+    pill(p, 'одна плотность → одна узкая полоса', DNA, X + 260, 620, m('band', .3), 28);
+  }],
+  ['density', 'Три полосы', (m) => {
+    const p = panel(0), x = 760, top = 140, h = 560, dep = rho => 230 + (rho - 1.710) / .014 * 200, yy = k => top + dep(RHO[k]);
+    const t = tube(p, x, top, .2, { w: 150, h });
+    grad(t, .3, h, { top: 40, n: 9, r: 75 });
+    say(p, 'г/см³', 560, yy('L') - 70, .4, { size: 24, fill: COL.dim, weight: 600 });
+    path(p, `M560 ${yy('L') - 46}V${yy('T') + 46}`, { stroke: COL.dim, 'stroke-width': 3 }, { o: 0 });
+    show(p.lastChild, .4);
+    say(p, 'масштаб растянут', 560, yy('T') + 90, .5, { size: 22, fill: COL.dim });
+    const lvl = (k, mark, d = 0) => {
+      const y = yy(k);
+      path(p, `M552 ${y}H568`, { stroke: COL.dim, 'stroke-width': 3 }, { o: 0 });
+      show(p.lastChild, m(mark, d));
+      say(p, fmt(RHO[k]), 540, y + 9, m(mark, d), { size: 28, weight: 700, anchor: 'end' });
+      bandOf(t, k, 1, m(mark, d + .3), dep);
+      say(p, LET[k], 860, y + 10, m(mark, d + .3), { size: 32, fill: BANDCOL[k], weight: 700, anchor: 'start' });
+    };
+    lvl('L', 'light'); lvl('T', 'heavy');
+    colorLine(p, [['0,014 / 1,710 ≈ '], ['0,8 %', DNA]], 1120, 300, m('gap'), { size: 30, anchor: 'start' });
+    say(p, 'меньше одного процента', 1120, 344, m('gap', 1), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    lvl('P', 'mid', .5);
+    colorLine(p, [['(1,710 + 1,724) / 2 = '], ['1,717', DNA]], 1120, yy('P') + 10, m('mid', 3), { size: 30, anchor: 'start' });
+    say(p, 'одна тяжёлая + одна лёгкая цепь', 1120, yy('P') + 52, m('mid', 1), { size: 24, fill: COL.dim, weight: 600, anchor: 'start' });
+    [['T', ' тяжёлая'], ['P', ' промежуточная'], ['L', ' лёгкая']].forEach(([k, s], i) =>
+      say(p, s, 884, yy(k) + 10, m('three', 1 + i * .6), { size: 26, fill: BANDCOL[k], weight: 600, anchor: 'start' }));
+  }],
+  ['predict', 'Предсказания: поколение 1', (m) => {
+    const p = panel(0);
+    expBase(p, .2);
+    const cols = [0, 1, 2].map(i => modelCol(p, i, .2));
+    const g0 = genPill(p, 0, m('zero'));
+    cols.forEach(c => { c.mols(0, m('zero', .4)); c.setBands(BANDS[c.key][0], m('zero', 1.2)); });
+    say(p, 'вся ДНК тяжёлая', 1000, 56, m('zero', 1.6), { size: 24, fill: COL.chalk, weight: 600, anchor: 'start' });
+    hide(p.lastChild, m('gen'), .3);
+    hide(g0, m('gen'), .3); genPill(p, 1, m('gen', .3));
+    say(p, 'в лёгкой среде ¹⁴N', 1000, 56, m('gen', .6), { size: 24, fill: DNA, weight: 600, anchor: 'start' });
+    const [c, s, d] = cols;
+    cons01(c, m('cons'), m('cons', 2.5)); c.setBands(BANDS.cons[1], m('cons', 4.5));
+    semi01(s, m('semi'), m('semi', 1.6)); s.setBands(BANDS.semi[1], m('semi', 3.6));
+    disp01(d, m('disp')); d.setBands(BANDS.disp[1], m('disp', 3.4));
+  }],
+  ['q2', 'Быстрая проверка', () => {
+    const p = panel(0), cols = expScene(p, 1, .2, { exp: 1 });
+    genPill(p, 1, .2);
+    S.picks = cols.map((c, i) => ({ el: c.tube, box: [c.x - 64, TR - 20, 128, TH + 36], label: MODELS[i] }));
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-gen1', prompt: ['Опыт: одна промежуточная полоса. Какая модель отпадает? Нажмите на её пробирку.'],
+    build: pickEls(S.picks, 0, 'Консервативная модель ждёт две полосы, тяжёлую и лёгкую, а в опыте одна, посередине.',
+      () => 'Эта модель тоже даёт одну промежуточную полосу: с опытом она пока совпадает.'),
+  }], done) }],
+  ['result', 'Поколение 1: одна полоса', (m) => {
+    const p = panel(0), cols = expScene(p, 1, .2, { exp: 1 });
+    genPill(p, 1, .2);
+    const y = k => TR + depthOf(RHO[k]);
+    ['T', 'L'].forEach((k, i) => {
+      const e = mk('rect', { x: XE - 41, y: y(k) - 13, width: 82, height: 26, rx: 13, fill: 'none', stroke: NO, 'stroke-width': 2.5, 'stroke-dasharray': '6 6' }, p);
+      put(e, { o: 0 }); show(e, m('why', .6 + i * 2.2));
+      yesNo(p, false, XE + 72, y(k), m('why', .8 + i * 2.2), .8);
+    });
+    cols[0].out(m('out'));
+    say(p, 'ждала две полосы: Т и Л', X3[0], 716, m('out', .6), { size: 24, fill: NO, weight: 600 });
+    pill(p, 'пока совпадает', COL.int, X3[2], 716, m('alive', .5), 24);
+    say(p, 'различит поколение 2', 1000, 56, m('next'), { size: 24, fill: DNA, weight: 600, anchor: 'start' });
+  }],
+  ['second', 'Предсказания: поколение 2', (m) => {
+    const p = panel(0), [c, s, d] = expScene(p, 1, .2, { out: [0] });
+    genPill(p, 2, .3);
+    semi12(s, m('semi'), m('old'), m('new'));
+    s.setBands(BANDS.semi[2], m('sum'));
+    say(p, '2 гибрида + 2 лёгкие', s.x, 716, m('sum', .6), { size: 24, weight: 600 });
+    disp12(d, m('disp'));
+    d.setBands(BANDS.disp[2], m('one'));
+    say(p, 'одна полоса: ¼ ¹⁵N', d.x, 716, m('one', .6), { size: 24, weight: 600 });
+    cons12(c, m('cons', 1));
+    c.setBands(BANDS.cons[2], m('cons', 3));
+    say(c.g, 'Т и Л, лёгких втрое больше', c.x, 716, m('cons', 4), { size: 24, weight: 600 });
+  }],
+  ['q3', 'Быстрая проверка', () => {
+    const p = panel(0), x = 330, top = 160, h = 520, dep = rho => 230 + (rho - 1.710) / .014 * 180;
+    say(p, 'опыт, поколение 2', x, 120, .2, { size: 30, fill: DNA, weight: 700 });
+    const t = tube(p, x, top, .2, { w: 130, h });
+    grad(t, .2, h, { n: 8, r: 65 });
+    bandOf(t, 'P', .5, .5, dep); bandOf(t, 'L', .5, .5, dep);
+    ['L', 'P', 'T'].forEach(k => {
+      const y = top + dep(RHO[k]);
+      path(p, `M${x - 110} ${y}H${x - 80}`, { stroke: COL.dim, 'stroke-width': 3 }, { o: 0 }); show(p.lastChild, .3);
+      say(p, LET[k], x - 124, y + 10, .3, { size: 30, fill: BANDCOL[k], weight: 700, anchor: 'end' });
+    });
+  }, { ask: done => quiz({ x: 620, y: 110, w: 900, cls: 'side', maxH: 700 }, [{
+    id: 'c-gen2', prompt: ['Поколение 2: две полосы поровну, промежуточная и лёгкая. Что это значит?'],
+    build: choice(['Исключена дисперсная модель: она предсказывала одну полосу', 'Исключена полуконсервативная: полоса должна остаться одна',
+      'Ничего нового: промежуточная полоса есть и у дисперсной модели', 'Подтверждается консервативная: полос снова две'], 0,
+    'Дисперсная модель дала бы одну полосу между П и Л, а их две.',
+    [null, 'Полуконсервативная как раз даёт два гибрида и две лёгкие молекулы: П и Л поровну.',
+      'У дисперсной во втором поколении полоса одна и уже легче П; двух полос она не даёт никогда.',
+      'Её две полосы — Т и Л, а тяжёлой здесь нет; к тому же её исключило поколение 1.']),
+  }], done) }],
+  ['verdict', 'Остаётся полуконсервативная', (m) => {
+    const p = panel(0), all = G(p), cols = expScene(all, 2, .2, { out: [0], exp: 2 });
+    genPill(all, 2, .2);
+    cols[2].out(m('out'));
+    say(all, 'ждала одну полосу', X3[2], 716, m('out', .6), { size: 24, fill: NO, weight: 600 });
+    cols[1].ok(m('left'));
+    tw(all, { o: 0 }, m('later', -.4), .6);
+    const row = G(p), xs = [440, 680, 920, 1160], RT = 250, y = k => RT + depthOf(RHO[k]);
+    say(row, 'опыт: поколения 1–4', 800, 170, m('later', .2), { size: 32, fill: DNA, weight: 700 });
+    ['P', 'L'].forEach(k => {
+      path(row, `M330 ${y(k)}H1250`, { stroke: COL.faint, 'stroke-width': 2, 'stroke-dasharray': '6 8' }, { o: 0 }); show(row.lastChild, m('later', .3));
+      say(row, LET[k], 310, y(k) + 10, m('later', .3), { size: 30, fill: BANDCOL[k], weight: 700, anchor: 'end' });
+    });
+    xs.forEach((x, k) => {
+      const t0 = m('later', .4 + k * .4), t = tube(row, x, RT, t0, { w: 90, h: TH, label: `поколение ${k + 1}` }), f = 2 / 2 ** (k + 1);
+      grad(t, t0, TH);
+      bandOf(t, 'P', f, t0 + .3);
+      if (f < 1) bandOf(t, 'L', 1 - f, t0 + .3);
+    });
+  }],
+  ['tree', 'Две старые цепи', (m) => {
+    const p = panel(0), GX = [170, 520, 870, 1220], w = 120;
+    // generation 3 rows; each parent sits between its two children; child 1 keeps the parent's top strand, child 2 its bottom
+    const ys = [[450], [310, 590], [240, 380, 520, 660], [205, 275, 345, 415, 485, 555, 625, 695]];
+    const kinds = [[[o, o]]];
+    for (let g = 1; g < 4; g++) kinds.push(kinds[g - 1].flatMap(([a, b]) => [[a, n], [n, b]]));
+    const tg = [.3, m('grow'), m('grow', 1.4), m('grow', 2.8)], pairs = [];
+    const cnt = ['1 молекула', '2 молекулы', '4 молекулы', '8 молекул'];
+    kinds.forEach((row, g) => {
+      say(p, `поколение ${g}`, GX[g], 112, tg[g], { size: 24, fill: COL.dim, weight: 600 });
+      say(p, cnt[g], GX[g], 148, tg[g], { size: 26, weight: 700 });
+      pairs.push(row.map(([a, b], j) => {
+        if (g) {
+          const py = ys[g - 1][j >> 1];
+          draw(path(p, `M${GX[g - 1] + w / 2 + 12} ${py}C${GX[g - 1] + w / 2 + 120} ${py} ${GX[g] - w / 2 - 120} ${ys[g][j]} ${GX[g] - w / 2 - 12} ${ys[g][j]}`, { stroke: COL.faint, 'stroke-width': 3 }, { d: 0 }), tg[g] - .3, .5);
+        }
+        return dsIcon(p, GX[g], ys[g][j], a, b, tg[g] + .1, { w });
+      }));
+    });
+    // halos behind the two old strands in every generation, and the trail through them
+    const trail = [[], []];
+    kinds.forEach((row, g) => row.forEach(([a, b], j) => [a, b].forEach((k, li) => {
+      if (k !== o) return;
+      const y = ys[g][j] + (li ? 11 : -11), hl = mk('rect', { x: GX[g] - w / 2 - 8, y: y - 9, width: w + 16, height: 18, rx: 9, fill: COL.chalk, 'fill-opacity': .3 }, p);
+      p.insertBefore(hl, p.firstChild);
+      put(hl, { o: 0 }); show(hl, m('old', .3 + g * .5));
+      trail[g ? (j === 0 ? 0 : 1) : li].push([GX[g], y]);
+    })));
+    trail.forEach((pts, i) => {
+      const e = path(p, 'M' + pts.map(([x, y]) => `${x} ${y}`).join('L'), { stroke: COL.chalk, 'stroke-width': 2.5, 'stroke-dasharray': '4 9', 'stroke-opacity': .7 }, { o: 0 });
+      p.insertBefore(e, p.firstChild);
+      show(e, m('old', .3 + i * .4), 1);
+    });
+    say(p, 'не разрушаются и не делятся', 345, 760 - 40, m('old', 3), { size: 26, fill: COL.chalk, weight: 600 });
+    // hybrids: frames, counter
+    kinds.forEach((row, g) => row.forEach(([a, b], j) => {
+      if (g === 0 || (a !== o && b !== o)) return;
+      const e = mk('rect', { x: GX[g] - w / 2 - 14, y: ys[g][j] - 28, width: w + 28, height: 56, rx: 14, fill: 'none', stroke: COL.chalk, 'stroke-width': 2.5 }, p);
+      put(e, { o: 0 }); show(e, m('hyb', .2 + g * .4));
+    }));
+    say(p, 'гибридов', 1450, 300, m('hyb'), { size: 30, weight: 600 });
+    const big = say(p, '2', 1450, 380, m('hyb'), { size: 72, fill: COL.chalk, weight: 700 });
+    pulse(big, m('hyb', 1.5), 1.3);
+    say(p, 'в поколении 3:', 1450, 480, m('rest', 1.5), { size: 24, fill: COL.dim, weight: 600 });
+    say(p, '2 гибрида', 1450, 520, m('rest', 2), { size: 28, fill: COL.chalk, weight: 700 });
+    say(p, '6 лёгких', 1450, 560, m('rest', 2.5), { size: 28, fill: DNA, weight: 700 });
+    pairs[3].forEach((q, j) => { if (j && j < 7) pulse(q, m('rest', .3 + j * .12), 1.15); });
+  }],
+  ['share', 'Доля гибридов', (m) => {
+    const p = panel(0), cx = [190, 430, 620, 800], ys = [250, 330, 410, 490];
+    ['поколение n', 'гибридов', 'всего', 'доля'].forEach((s, i) => say(p, s, cx[i], 170, .2 + i * .1, { size: 26, fill: COL.dim, weight: 600 }));
+    path(p, 'M90 196H880', { stroke: COL.faint, 'stroke-width': 2 }, { o: 0 }); show(p.lastChild, .3);
+    const marks = ['one', 'two', 'three', 'four'], fr = ['1', '½', '¼', '⅛'];
+    marks.forEach((mk2, r) => {
+      [String(r + 1), '2', String(2 ** (r + 1)), fr[r]].forEach((s, i) =>
+        say(p, s, cx[i], ys[r] + 12, m(mk2, i * .25), { size: 36, fill: i === 3 ? DNA : COL.chalk, weight: 700 }));
+    });
+    [['n', COL.chalk], ['2', COL.chalk], ['2ⁿ', COL.chalk], ['2 / 2ⁿ', DNA]].forEach(([s, c], i) =>
+      say(p, s, cx[i], 612, m('rule', i * .3), { size: 38, fill: c, weight: 700 }));
+    path(p, 'M90 560H880', { stroke: COL.faint, 'stroke-width': 2 }, { o: 0 }); show(p.lastChild, m('rule'));
+    say(p, 'каждое поколение — вдвое меньше', 490, 680, m('rule', 4), { size: 28, fill: COL.dim, weight: 600 });
+    // the tube: the hybrid band thins but stays at 1,717
+    const x = 1250, top = 200, y = k => top + depthOf(RHO[k]), t = tube(p, x, top, .3, { w: 110, h: TH });
+    grad(t, .3, TH, { r: 55 });
+    ['P', 'L'].forEach(k => {
+      path(p, `M${x - 150} ${y(k)}H${x + 90}`, { stroke: COL.faint, 'stroke-width': 2, 'stroke-dasharray': '6 8' }, { o: 0 }); show(p.lastChild, .4);
+      say(p, `${LET[k]} · ${fmt(RHO[k])}`, x - 160, y(k) + 9, .4, { size: 24, fill: BANDCOL[k], weight: 700, anchor: 'end' });
+    });
+    let cur = [];
+    marks.forEach((mk2, r) => {
+      const f = 2 / 2 ** (r + 1), t0 = m(mk2, .8);
+      cur.forEach(e => hide(e, t0, .3));
+      cur = [...bandOf(t, 'P', f, t0, depthOf), ...(f < 1 ? bandOf(t, 'L', 1 - f, t0) : [])];
+    });
+    say(p, 'тоньше, но на том же месте', x, 580, m('thin', .5), { size: 28, fill: DNA, weight: 700 });
+  }],
+  ['q4', 'Быстрая проверка', () => {
+    const p = panel(0);
+    colorLine(p, [['из одной тяжёлой молекулы:  всего '], ['2ⁿ', DNA], [',  гибридов '], ['2', DNA]], 800, 120, .2, { size: 32 });
+  }, { ask: done => quiz({ x: 300, y: 170, w: 1000, cls: 'side', maxH: 640 }, [{
+    id: 'c-gen5', prompt: ['Пятое поколение, начали с одной тяжёлой молекулы. Впишите числа.'], build: blanks(Q_GEN5),
+  }], done) }],
+  ['melt', 'Целые цепи или мозаика', (m) => {
+    const p = panel(0), x = 1000, top = 150, h = 480, dep = rho => 105 + (rho - 1.710) * 9000, yy = rho => top + dep(rho);
+    // the objection: a hybrid and a mosaic have one density
+    dsIcon(p, 230, 180, O4, N4, m('obj'), { w: 160 });
+    say(p, '=', 400, 194, m('obj', 1.5), { size: 44, weight: 700 });
+    dsIcon(p, 570, 180, [o, n, o, n], [n, o, n, o], m('obj', 1), { w: 160 });
+    say(p, 'целые цепи', 230, 240, m('obj', .3), { size: 24, fill: COL.dim, weight: 600 });
+    say(p, 'мозаика', 570, 240, m('obj', 1.3), { size: 24, fill: COL.dim, weight: 600 });
+    say(p, 'плотность одна: 1,717', 400, 290, m('obj', 3), { size: 26, weight: 600 });
+    // heating: the hybrid of generation 1 comes apart
+    const mol = G(p, { o: 0 }), rg = G(mol), lines = [[COL.chalk, -11], [DNA, 11]].map(([c, dy]) => {
+      const e = G(mol, { x: 400, y: 430 + dy });
+      path(e, 'M-100 0H100', { stroke: c, 'stroke-width': 10, 'stroke-linecap': 'butt' });
+      return e;
+    });
+    for (let k = 1; k < 14; k++) path(rg, `M${300 + k * 14.3} 419V441`, { stroke: COL.dim, 'stroke-width': 2.5 });
+    show(mol, m('heat'));
+    say(p, 'ДНК поколения 1', 400, 350, m('heat'), { size: 24, fill: COL.dim, weight: 600 });
+    flame(p, 400, 590, m('heat', 1)); say(p, 'нагрев', 440, 570, m('heat', 1.2), { size: 24, fill: COL.int, weight: 600, anchor: 'start' });
+    hide(rg, m('heat', 3), .4);
+    tw(lines[0], { y: 390 }, m('heat', 3.2), 1); tw(lines[1], { y: 480 }, m('heat', 3.2), 1);
+    say(p, 'денатурация', 560, 440, m('heat', 5), { size: 28, fill: DNA, weight: 700, anchor: 'start' });
+    // the tube of heated DNA: native levels dashed, single strands land lower
+    say(p, 'прогретая ДНК', x, 118, m('spin'), { size: 28, weight: 700 });
+    const t = tube(p, x, top, m('spin'), { w: 120, h });
+    grad(t, m('spin'), h, { r: 60 });
+    [[1.710, 'Л', DNA], [1.724, 'Т', COL.chalk]].forEach(([rho, s, c]) => {
+      path(p, `M${x - 90} ${yy(rho)}H${x + 60}`, { stroke: c, 'stroke-width': 2.5, 'stroke-dasharray': '6 7', 'stroke-opacity': .8 }, { o: 0 });
+      show(p.lastChild, m('spin', .4));
+      say(p, `${s} двойной спирали`, x - 100, yy(rho) + 8, m('spin', .4), { size: 22, fill: c, weight: 600, anchor: 'end' });
+    });
+    [[COL.chalk, 390, 1.740, 0], [DNA, 480, 1.725, .3]].forEach(([c, y0, rho, d]) => {
+      const e = G(p, { x: 400, y: y0, o: 0 });
+      path(e, 'M-100 0H100', { stroke: c, 'stroke-width': 10, 'stroke-linecap': 'butt' });
+      show(e, m('two', d), .1); tw(e, { x, y: yy(rho), s: .45 }, m('two', d), 1.2); hide(e, m('two', 1.6), .4);
+    });
+    t.band(dep(1.740), COL.chalk, m('two', 1.4), 14); t.band(dep(1.725), DNA, m('two', 1.6), 14);
+    say(p, 'прогретая ¹⁵N ≈ 1,740', x + 104, yy(1.740) + 9, m('two', 1.8), { size: 24, fill: COL.chalk, weight: 700, anchor: 'start' });
+    say(p, 'прогретая ¹⁴N ≈ 1,725', x + 104, yy(1.725) + 9, m('two', 2.2), { size: 24, fill: DNA, weight: 700, anchor: 'start' });
+    arrowTo(p, x + 74, yy(1.710), x + 74, yy(1.725) + 4, DNA, m('low', .5));
+    arrowTo(p, x + 90, yy(1.724) + 14, x + 90, yy(1.740) + 4, COL.chalk, m('low', 1));
+    say(p, 'одиночные цепи плотнее → ниже', x, 690, m('low', 1.5), { size: 26, weight: 600 });
+    // the dispersive prediction: one band
+    const pale = G(p, { o: 0 }), pt = tube(pale, 1490, top, m('mosaic'), { w: 70, h });
+    put(pt, { o: 1 });
+    pt.band(dep(1.7325), mix(DNA, COL.chalk, .5), m('mosaic', .5), 14);
+    T(pale, 'мозаика:', { x: 1490, y: 680, size: 22, fill: COL.dim, weight: 600, anchor: 'middle' });
+    T(pale, 'одна полоса', { x: 1490, y: 708, size: 22, fill: COL.dim, weight: 600, anchor: 'middle' });
+    tw(pale, { o: .5 }, m('mosaic'), .5);
+    draw(path(p, `M1440 ${top + 20}L1540 ${top + h - 20}M1540 ${top + 20}L1440 ${top + h - 20}`, { stroke: NO, 'stroke-width': 5 }, { d: 0 }), m('mosaic', 3), .5);
+    say(p, 'одна цепь целиком старая, другая — новая', 400, 650, m('end'), { size: 24, weight: 600 });
+    pill(p, 'полуконсервативно', DNA, 400, 704, m('end', 3), 28);
+  }],
+  ['wrap', 'Итоги', (m) => {
+    const p = panel(0);
+    numbered(p, [
+      ['три модели различаются тем, куда попадают старые цепи', 'w1'],
+      ['¹⁵N метит старые цепи, градиент CsCl делит молекулы по плотности', 'w2'],
+      ['поколение 1 исключило консервативную модель, поколение 2 — дисперсную', 'w3'],
+      ['гибридов всегда 2, доля 2 / 2ⁿ; прогрев: цепи целиком старые или новые', 'w4'],
+    ], m, 180, 120, 30);
+    pill(p, 'как расходятся цепи и как строится новая — в следующих главах', DNA, 800, 680, m('w4', 8.5), 26);
+  }],
+  ['final1', 'Практика главы', () => { panel(0); }, { ask: done => quiz(SCREEN, [{
+    id: 'p-num', prompt: ['Начинаем с одной тяжёлой молекулы. Впишите числа.'], build: blanks(P_NUM),
+  }], done, 'Практика главы   1 из 3') }],
+  ['final2', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-tf', prompt: ['Верно или неверно?'], build: grid(P_TF, TF, { multi: false, text: true }),
+  }], done, 'Практика главы   2 из 3') }],
+  ['final3', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-model', prompt: ['Какая модель это предсказывает?'], build: grid(P_MODEL, MCOLS, { multi: false, text: true }),
+  }], done, 'Практика главы   3 из 3') }],
+  ['finish', 'Готово', () => {}, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+/* ---------- question data ---------- */
+const MCOLS = [['c', 'консервативная', null, '1'], ['s', 'полуконсервативная', null, '2'], ['d', 'дисперсная', null, '3']];
+const Q_MODEL = [
+  { parts: ['Одна молекула целиком старая, другая целиком новая'], ans: ['c'], why: 'Родительская спираль остаётся целой, рядом строится новая.' },
+  { parts: ['В каждой дочерней молекуле одна старая цепь и одна новая'], ans: ['s'], why: 'Цепи расходятся, и к каждой достраивается новая.' },
+  { parts: ['Старые куски рассыпаны по обеим цепям обеих молекул'], ans: ['d'], why: 'Старый материал разрезан и перемешан с новым.' },
+  { parts: ['Это догадка Уотсона и Крика'], ans: ['s'], why: 'Каждая цепь служит образцом для новой.' },
+  { parts: ['После одного цикла старый материал есть только в одной из двух молекул'], ans: ['c'], why: 'Обе старые цепи остаются вместе, в одной молекуле.' },
+];
+const Q_GEN5 = [
+  { parts: ['Всего молекул: ', { box: '32' }], why: '2⁵ = 32.', hint: 'Число молекул удваивается каждое поколение: 2ⁿ.' },
+  { parts: ['Гибридных: ', { box: '2' }], why: 'Тяжёлых цепей две, и каждая сидит в своём гибриде.', hint: 'Сколько было тяжёлых цепей?' },
+  { parts: ['Лёгких: ', { box: '30' }], why: '32 − 2 = 30.', hint: 'Все молекулы, кроме гибридов.' },
+  { parts: ['Доля гибридных: ', { box: '1/16' }], why: '2 / 32 = 1/16.', hint: 'Гибриды разделите на все молекулы; ответ дробью, например 1/4.' },
+];
+const P_NUM = [
+  { parts: ['Лёгкая ДНК 1,710 г/см³, тяжёлая 1,724 г/см³. Гибрид встаёт на ', { box: '1,717' }, ' г/см³'], why: '(1,710 + 1,724) / 2 = 1,717.', hint: 'Гибрид ровно посередине: сумма пополам.' },
+  { parts: ['Полуконсервативная, поколение 4: гибридных ', { box: '2' }, ', лёгких ', { box: '14' }], why: '2⁴ = 16 молекул: 2 гибрида и 16 − 2 = 14 лёгких.', hint: 'Всего 2⁴ молекул, гибридов всегда 2.' },
+  { parts: ['Консервативная, поколение 2: тяжёлых ', { box: '1' }, ', лёгких ', { box: '3' }], why: 'Родительская молекула остаётся целой, остальные 3 из 4 целиком новые.', hint: 'Старые цепи не расходятся: тяжёлая молекула одна.' },
+  { parts: ['Дисперсная, поколение 3: доля ¹⁵N в каждой молекуле ', { box: '1/8' }], why: 'Каждое поколение вдвое меньше: ½ → ¼ → ⅛.', hint: 'В поколении 1 половина, дальше каждый раз вдвое меньше.' },
+  { parts: ['Поколение 6: всего молекул ', { box: '64' }], why: '2⁶ = 64.', hint: 'Каждое поколение число молекул удваивается.' },
+  { parts: ['Поколение 6, полуконсервативная: доля гибридных ', { box: '1/32' }], why: '2 / 64 = 1/32.', hint: 'Доля гибридов 2 / 2ⁿ.' },
+];
+const P_TF = [
+  { parts: ['Радиоактивная метка заметно увеличивает плотность ДНК.'], ans: ['f'], why: 'Она почти не меняет плотность, поэтому старые цепи метили тяжёлым азотом.' },
+  { parts: ['¹⁵N стабилен, в его ядре на один нейтрон больше, чем у ¹⁴N.'], ans: ['t'], why: '7 протонов и 8 нейтронов против 7 и 7.' },
+  { parts: ['В градиенте CsCl молекула останавливается там, где плотность раствора равна её собственной.'], ans: ['t'], why: 'Выше раствор легче, и она тонет; ниже плотнее, и она всплывает.' },
+  { parts: ['Гибрид ¹⁵N/¹⁴N встаёт около 1,717 г/см³, посередине между 1,710 и 1,724.'], ans: ['t'], why: '(1,710 + 1,724) / 2 = 1,717.' },
+  { parts: ['По полуконсервативной модели промежуточная полоса с каждым поколением становится легче.'], ans: ['f'], why: 'Она становится тоньше, а место не меняет: в гибриде всегда одна тяжёлая и одна лёгкая цепь.' },
+  { parts: ['Консервативная модель ни в одном поколении не даёт промежуточной полосы.'], ans: ['t'], why: 'Её молекулы либо целиком старые, либо целиком новые.' },
+  { parts: ['Дисперсную модель исключило поколение 1.'], ans: ['f'], why: 'В поколении 1 она даёт ту же промежуточную полосу; исключило её поколение 2.' },
+  { parts: ['Одиночные цепи после прогрева лежат в градиенте выше двойной спирали.'], ans: ['f'], why: 'Одиночные цепи плотнее и ложатся ниже.' },
+];
+const P_MODEL = [
+  { parts: ['Поколение 1: полосы Т и Л'], ans: ['c'], why: 'Старая молекула целая (Т), новая целиком лёгкая (Л).' },
+  { parts: ['Поколение 2: одна полоса между П и Л'], ans: ['d'], why: 'В каждой молекуле четверть тяжёлого материала: полоса одна и легче П.' },
+  { parts: ['Поколение 2: П и Л поровну'], ans: ['s'], why: '2 гибрида и 2 лёгкие молекулы.' },
+  { parts: ['Поколение 2: Т и Л, лёгкой втрое больше'], ans: ['c'], why: 'Одна старая молекула и три новые.' },
+  { parts: ['ДНК поколения 1: до прогрева одна полоса П, после прогрева две полосы'], ans: ['s'], why: 'Цепи гибрида целиком тяжёлая и целиком лёгкая.' },
+  { parts: ['ДНК поколения 1 после прогрева: одна полоса'], ans: ['d'], why: 'Мозаичные цепи одинаковы по плотности.' },
+];
+boot();
+</script>
+</body>
+</html>
