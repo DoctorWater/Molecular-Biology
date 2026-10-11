@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Двойная спираль — ДНК и её копирование</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d2b27'/%3E%3Ctext x='32' y='45' text-anchor='middle' font-size='48' fill='%23f0b45a'%3E∞%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<script src="../lib/engine.js"></script>
+<script src="../lib/bio.js"></script>
+<script src="audio/ru/timings.js"></script>
+<script>
+'use strict';
+const CHAPTER = { number: 3, title: 'Двойная спираль', minutes: 12, language: 'ru' };
+
+/* ---------- chapter drawing helpers (shared ones: lib/bio.js) ---------- */
+// The year in large amber at the top left, names beside it (as in ch01).
+function yearTag(p, year, names, t0) {
+  say(p, year, 90, 118, t0, { size: 58, fill: DNA, weight: 700, anchor: 'start' });
+  say(p, names, 90 + uiW(year, 58) * 1.12 + 30, 112, t0 + .3, { size: 30, fill: COL.dim, weight: 600, anchor: 'start' });
+}
+// A bracket from x1 to x2 at height y with its label above (up) or below.
+function hBracket(p, x1, x2, y, str, color, t0, { up = true, size = 26 } = {}) {
+  const g = G(p, { o: 0 }), h = up ? 12 : -12;
+  path(g, `M${x1} ${y + h}V${y}H${x2}V${y + h}`, { stroke: color, 'stroke-width': 3 });
+  T(g, str, { x: (x1 + x2) / 2, y: up ? y - 14 : y + 36, size, fill: color, weight: 700, anchor: 'middle' });
+  show(g, t0);
+  return g;
+}
+// A vertical bracket from y1 to y2 at x with its label to the right (or left).
+function vBracket(p, x, y1, y2, str, color, t0, { right = true, size = 26 } = {}) {
+  const g = G(p, { o: 0 }), w = right ? -12 : 12;
+  path(g, `M${x + w} ${y1}H${x}V${y2}H${x + w}`, { stroke: color, 'stroke-width': 3 });
+  T(g, str, { x: x + (right ? 14 : -14), y: (y1 + y2) / 2 + 9, size, fill: color, weight: 700, anchor: right ? 'start' : 'end' });
+  show(g, t0);
+  return g;
+}
+// A composition bar: A, T, G, C in percent, w px = 100 %. Segments start hidden: {seg: {A: g…}, xs: {A: [x1, x2]…}}.
+function compBar(p, x, y, w, comp, { h = 64 } = {}) {
+  const out = { seg: {}, xs: {} };
+  let cx = x;
+  ['A', 'T', 'G', 'C'].forEach(b => {
+    if (!comp[b]) return;
+    const ww = w * comp[b] / 100, g = G(p, { o: 0 });
+    mk('rect', { x: cx, y, width: ww - 4, height: h, rx: 10, fill: BASE[b] }, g);
+    T(g, `${b} ${comp[b]} %`, { x: cx + ww / 2, y: y + h / 2 + 10, size: 28, fill: COL.board, weight: 700, anchor: 'middle' });
+    out.seg[b] = g; out.xs[b] = [cx, cx + ww - 4]; cx += ww;
+  });
+  return out;
+}
+// Side view of B-DNA along a horizontal axis, 10 px per ångström by default (pitch P = 34 Å, radius A = 10 Å): two backbones
+// as sine curves, strand 1 leading strand 2 by the minor-groove width; base-pair rungs every P/10; back halves dimmed.
+// Front segments run from upper left to lower right, as in a right-handed helix lying with its axis to the right.
+const RUNG_SEQ = 'ATGCGATCCGTAAGCTTGCAGTCAGGATCC';
+function helixSide(p, x0, y0, len, t0, { P = 340, A = 100, minor = 12 / 34 } = {}) {
+  const g = G(p, { o: t0 == null ? 1 : 0 }), k = 2 * Math.PI / P, d = minor * P;
+  const th = (x, s) => k * (x - x0 - s * d);
+  const yAt = (x, s) => y0 - A * Math.sin(th(x, s));
+  const seg = (s, front) => {
+    let str = '', pen = false;
+    for (let x = x0; x <= x0 + len + .1; x += 3) {
+      if ((Math.cos(th(x, s)) < 0) === front) { str += (pen ? 'L' : 'M') + x.toFixed(1) + ' ' + yAt(x, s).toFixed(1); pen = true; } else pen = false;
+    }
+    return str;
+  };
+  const back = G(g), mid = G(g), front = G(g);
+  [0, 1].forEach(s => path(back, seg(s, false), { stroke: COL.dim, 'stroke-width': 7, opacity: .5 }));
+  g.rungs = [];
+  for (let x = x0 + P / 20, i = 0; x < x0 + len; x += P / 10, i++) {
+    const b = RUNG_SEQ[i % RUNG_SEQ.length], ya = yAt(x, 0), yb = yAt(x, 1), ym = (ya + yb) / 2, r = G(mid);
+    path(r, `M${x} ${ya}V${ym}`, { stroke: BASE[b], 'stroke-width': 7 });
+    path(r, `M${x} ${ym}V${yb}`, { stroke: BASE[COMP[b]], 'stroke-width': 7 });
+    g.rungs.push(r);
+  }
+  [0, 1].forEach(s => path(front, seg(s, true), { stroke: COL.chalk, 'stroke-width': 8 }));
+  g.back = back; g.front = front; g.yAt = yAt;
+  g.crest = (j, s) => x0 + P / 4 + s * d + j * P;   // x of the j-th top crest of strand s
+  if (t0 != null) show(g, t0);
+  return g;
+}
+// A base pair drawn flat: b1 on the left (purine five-ring outward), b2 on the right (flipped), k hydrogen-bond dashes between
+// the facing ring edges. Returns {g, bonds, x1, x2 — the outer edges}.
+function flatPair(p, b1, b2, x, y, t0, { R = 46, L = 100, k } = {}) {
+  const g = G(p, { o: t0 == null ? 1 : 0 }), xr = x + 2 * .866 * R + L;
+  baseRings(g, b1, x, y, null, { R });
+  baseRings(g, b2, xr, y, null, { R, flip: true });
+  k = k ?? (b1 === 'G' || b1 === 'C' ? 3 : 2);
+  const bonds = G(g);
+  for (let j = 0; j < k; j++) {
+    const yy = y + (j - (k - 1) / 2) * 26;
+    path(bonds, `M${x + .866 * R + 10} ${yy}H${xr - .866 * R - 10}`, { stroke: COL.chalk, 'stroke-width': 3.5, 'stroke-dasharray': '7 6' });
+  }
+  const ext = b => PURINE[b] ? 2.405 * R : .866 * R;
+  if (t0 != null) show(g, t0);
+  return { g, bonds, x1: x - ext(b1), x2: xr + ext(b2) };
+}
+// A row of base letters in their colours with end labels, e.g. 5′- G A A T T C -3′. .chips[i], .xAt(i).
+function seqRow(p, seq, x, y, t0, { ends = ['5′', '3′'], dx = 44, size = 44, step = 0 } = {}) {
+  const g = G(p);
+  g.xAt = i => x + i * dx;
+  g.l = T(g, ends[0] + '–', { x: x - dx * .55, y, size: size * .7, fill: COL.dim, weight: 700, anchor: 'end', o: 0 });
+  g.r = T(g, '–' + ends[1], { x: g.xAt(seq.length - 1) + dx * .55, y, size: size * .7, fill: COL.dim, weight: 700, o: 0 });
+  g.chips = [...seq].map((b, i) => T(g, b, { x: g.xAt(i), y, size, fill: BASE[b], weight: 700, anchor: 'middle', o: 0 }));
+  if (t0 != null) { show(g.l, t0); g.chips.forEach((c, i) => show(c, t0 + i * step, .3)); show(g.r, t0 + (seq.length - 1) * step); }
+  return g;
+}
+// The lower row read right to left: copies of its letters fly into a new row in reverse order, with fresh end labels.
+function readBack(p, row, seq, x, y, t0, { dx = 44, size = 44 } = {}) {
+  const n = seq.length, out = seqRow(p, [...seq].reverse().join(''), x, y, null, { dx, size });
+  show(out.l, t0 + .9); show(out.r, t0 + .9);
+  out.chips.forEach((c, j) => {
+    const i = n - 1 - j, x0 = row.xAt(i), y0 = st(row.chips[i]).y;
+    put(c, { x: x0, y: y0 }); show(c, t0, .2); tw(c, { x: out.xAt(j), y }, t0 + .1 + j * .08, .8, io);
+  });
+  return out;
+}
+// A round chip with one letter (major-groove patterns: А, Д, М, H).
+function chip(p, ch, x, y, t0, { r = 24, color = COL.chalk } = {}) {
+  const g = G(p, { x, y, o: 0 });
+  mk('circle', { r, fill: CARD, stroke: color, 'stroke-width': 3 }, g);
+  T(g, ch, { y: r * .38, size: r * 1.05, fill: color, weight: 700, anchor: 'middle' });
+  if (t0 != null) show(g, t0, .3);
+  return g;
+}
+const PENT = [0, 1, 2, 3, 4].map(k => `${(16 * Math.sin(k * 1.2566)).toFixed(1)} ${(-16 * Math.cos(k * 1.2566)).toFixed(1)}`).join('L');
+const sugarDot = (p, x, y) => mk('path', { d: `M${PENT}Z`, fill: CARD, stroke: COL.dim, 'stroke-width': 4, transform: `translate(${x},${y})` }, p);
+
+/* ---------- beats: [id, title, run(m, D), { ask }?] ---------- */
+const BEATS = [
+  ['intro', 'Двойная спираль', (m, D) => {
+    const g = G(scene, { o: 0, y: 24 });
+    T(g, 'Раздел 1 «Открытие и строение ДНК» · Глава 3', { x: 800, y: 330, size: 28, fill: COL.dim, anchor: 'middle' });
+    T(g, 'Двойная спираль', { x: 800, y: 440, size: 74, weight: 600, anchor: 'middle' });
+    tw(g, { o: 1, y: 0 }, .2, 1.1, out);
+    const r = say(scene, 'правило Чаргаффа, снимок № 51, модель Уотсона и Крика', 800, 560, m('sub'), { size: 32, fill: COL.dim });
+    tw(g, { o: 0, y: -24 }, D - .9, .8); hide(r, D - .9, .8);
+  }],
+  ['chargaff', 'Правило Чаргаффа', (m) => {
+    const p = panel(0), X = 400, W = 1000;
+    yearTag(p, '1950–1953', 'Эрвин Чаргафф', m('who'));
+    say(p, 'человек', X - 30, 332, .2, { size: 30, weight: 600, anchor: 'end' });
+    const b1 = compBar(p, X, 290, W, { A: 30, T: 30, G: 20, C: 20 });
+    show(b1.seg.A, .3); show(b1.seg.T, m('t'));
+    say(p, 'другой организм', X - 30, 552, m('other'), { size: 30, weight: 600, anchor: 'end' });
+    const b2 = compBar(p, X, 510, W, { A: 20, T: 20, G: 30, C: 30 });
+    show(b2.seg.A, m('other', .3)); show(b2.seg.T, m('t2'));
+    [b1, b2].forEach(b => { show(b.seg.G, m('diff', .3)); show(b.seg.C, m('diff', .6)); });
+    [b1, b2].forEach((b, k) => {
+      const y = [290, 510][k] + 84;
+      hBracket(p, b.xs.A[0], b.xs.T[1], y, 'A = T', COL.chalk, m('rule', .3 + k * .3), { up: false });
+      hBracket(p, b.xs.G[0], b.xs.C[1], y, 'G = C', COL.chalk, m('gc', .3 + k * .3), { up: false });
+    });
+    say(p, 'состав у видов разный', 800, 220, m('diff', 1), { size: 28, fill: COL.dim, weight: 600 });
+    pill(p, 'пуринов столько же, сколько пиримидинов: A + G = T + C', DNA, 800, 790, m('pur'), 30);
+  }],
+  ['ratio', 'Считаем состав', (m) => {
+    const p = panel(0);
+    const b = compBar(p, 300, 110, 1000, { A: 30, T: 30, G: 20, C: 20 });
+    show(b.seg.A, m('a')); show(b.seg.T, m('t')); show(b.seg.G, m('gc', .4)); show(b.seg.C, m('gc', .6));
+    const L = (parts, y, t0, size = 32) => colorLine(p, parts, 160, y, t0, { size, anchor: 'start' });
+    L([['A', BASE.A], [' = 30 %   →   '], ['T', BASE.T], [' = 30 %, вместе 60 %']], 270, m('t'));
+    L([['G', BASE.G], [' + '], ['C', BASE.C], [' = 100 − 60 = 40 %   →   по 20 %']], 335, m('gc'));
+    L([['пурины '], ['A', BASE.A], [' + '], ['G', BASE.G], [' = 50 %,   пиримидины '], ['T', BASE.T], [' + '], ['C', BASE.C], [' = 50 %']], 400, m('check'));
+    L([['('], ['A', BASE.A], [' + '], ['T', BASE.T], [') / ('], ['G', BASE.G], [' + '], ['C', BASE.C], [')  —  у видов разное']], 510, m('ratio'));
+    L([['60 / 40 = 1,5   →   '], ['AT-богатая ДНК', DNA]], 580, m('at'), 30);
+    L([['A = T = 20 %:   40 / 60 ≈ 0,67   →   '], ['GC-богатая', DNA]], 645, m('gcr'), 30);
+    // single-stranded DNA breaks the rule
+    const box = mk('rect', { x: 1000, y: 470, width: 520, height: 300, rx: 18, fill: CARD, stroke: COL.dim, 'stroke-width': 2.5 }, p);
+    put(box, { o: 0 }); show(box, m('ss'));
+    say(p, 'одна цепь: фаг φX174', 1260, 520, m('ss'), { size: 28, weight: 700 });
+    strand(G(p, { x: 1056, y: 660, s: .6 }), 'ATGAACGTAG', 0, 0, m('ss', .4), { dx: 80, step: .06 });
+    say(p, 'A ≠ T, G ≠ C: спариваться не с кем', 1260, 735, m('ss', 1.6), { size: 25, fill: NO, weight: 600 });
+    say(p, 'откуда равенства — Чаргафф не знал', 800, 840, m('why'), { size: 26, fill: COL.dim, weight: 600 });
+  }],
+  ['q1', 'Быстрая проверка', () => {
+    const p = panel(0);
+    say(p, 'в ДНК 22 % гуанина', 800, 110, .2, { size: 34, weight: 700 });
+    const b = compBar(p, 300, 160, 1000, { G: 22 });
+    put(b.seg.G, { x: 780 }); show(b.seg.G, .3);
+    const rest = G(p, { o: 0 });
+    mk('rect', { x: 300, y: 160, width: 776, height: 64, rx: 10, fill: 'none', stroke: COL.dim, 'stroke-width': 3, 'stroke-dasharray': '10 8' }, rest);
+    T(rest, 'A, T, C — ?', { x: 688, y: 202, size: 28, fill: COL.dim, weight: 700, anchor: 'middle' });
+    show(rest, .4);
+  }, { ask: done => quiz({ x: 300, y: 290, w: 1000, cls: 'side', maxH: 520 }, [{
+    id: 'c-comp', prompt: ['В ДНК 22 % гуанина. Сколько остальных оснований?'], build: blanks(Q_COMP),
+  }], done) }],
+  ['franklin', 'Снимок № 51', (m) => {
+    const p = panel(0), cx = 410, cy = 470;
+    yearTag(p, '1952', 'Розалинд Франклин', .2);
+    const film = mk('rect', { x: 190, y: 190, width: 440, height: 560, rx: 14, fill: '#0e1513', stroke: COL.dim, 'stroke-width': 2 }, p);
+    put(film, { o: 0 }); show(film, m('ray'));
+    // the beam
+    const beam = arrowTo(p, 40, cy, cx - 6, cy, COL.int, m('ray', .2));
+    hide(beam, m('ray', 2.4), .5);
+    // the X of spots along layer lines (none on the 4th, as on the real photo)
+    const spots = G(p, { o: 0 }), dx = 25, dy = 27;   // the 3.4 Å arcs sit on the 10th layer line: 34 / 3.4
+    [1, 2, 3, 5, 6, 7].forEach(l => [-1, 1].forEach(sx => [-1, 1].forEach(sy =>
+      mk('ellipse', { cx: cx + sx * l * dx, cy: cy + sy * l * dy, rx: 12, ry: 7, fill: COL.chalk, opacity: .9 - l * .07 }, spots))));
+    show(spots, m('ray', 1.2), 1);
+    const arcs = G(p, { o: 0 });
+    [-1, 1].forEach(sy => path(arcs, `M${cx - 50} ${cy + sy * (10 * dy - 10)}Q${cx} ${cy + sy * (10 * dy + 10)} ${cx + 50} ${cy + sy * (10 * dy - 10)}`, { stroke: COL.chalk, 'stroke-width': 10 }));
+    show(arcs, m('ray', 1.6), 1);
+    say(p, 'снимок № 51 · B-форма', cx, 828, m('photo'), { size: 28, weight: 700 });
+    // humidity
+    colorLine(p, [['влажность > 92 % → '], ['B-форма', DNA], ['   ≈ 75 % → '], ['A-форма', COL.dim], [' (плотнее)']], 720, 230, m('wet'), { size: 28, anchor: 'start' });
+    // what the photo says
+    const row = (y, what, then, t0) => {
+      say(p, what, 720, y, t0, { size: 28, weight: 600, anchor: 'start' });
+      say(p, '→ ' + then, 1110, y, t0 + .4, { size: 28, fill: DNA, weight: 600, anchor: 'start' });
+    };
+    const guides = G(p, { o: 0 });
+    [-1, 1].forEach(s => path(guides, `M${cx - 7.6 * dx} ${cy - s * 7.6 * dy}L${cx + 7.6 * dx} ${cy + s * 7.6 * dy}`, { stroke: DNA, 'stroke-width': 3, 'stroke-dasharray': '8 8' }));
+    show(guides, m('cross')); hide(guides, m('small'), .4);
+    row(330, 'крест из пятен', 'спираль', m('cross', .3));
+    pulse(arcs, m('small', .2), 1.15);
+    row(410, 'частый повтор 3,4 Å', 'основания стопкой', m('small', .3));
+    vBracket(p, cx + 6.5 * dx + 30, cy + 2 * dy, cy + 3 * dy, '34 Å', DNA, m('big'));
+    row(490, 'крупный повтор 34 Å', 'один виток', m('big', .3));
+    hBracket(p, cx - 7 * dx - 12, cx + 7 * dx + 12, 768, '', DNA, m('width'), { up: false });
+    row(570, 'ширина рисунка', 'диаметр ≈ 20 Å', m('width', .3));
+    pill(p, '34 / 3,4 = 10 оснований на виток', DNA, 1080, 680, m('ten'), 30);
+    say(p, 'по плотности: цепей больше одной — две или три', 1080, 780, m('chains'), { size: 26, fill: COL.dim, weight: 600 });
+  }],
+  ['watson', 'Модель Уотсона и Крика', (m) => {
+    const p = panel(0);
+    yearTag(p, '1953', 'Джеймс Уотсон и Фрэнсис Крик', .2);
+    const h = helixSide(p, 160, 330, 1280, m('two'));
+    say(p, 'остовы снаружи', 1290, 196, m('out'), { size: 26, fill: COL.chalk, weight: 600 });
+    say(p, 'основания внутри', 1290, 470, m('out', .6), { size: 26, fill: COL.dim, weight: 600 });
+    h.rungs.forEach((r, i) => pulse(r, m('pair', .3 + i * .03), 1.15));
+    colorLine(p, [['A', BASE.A], [' — '], ['T', BASE.T], ['     '], ['G', BASE.G], [' — '], ['C', BASE.C]], 800, 520, m('pair', .4), { size: 40, weight: 700 });
+    say(p, 'сколько A — столько напротив T: правило Чаргаффа', 800, 580, m('rule'), { size: 28, fill: DNA, weight: 600 });
+    const lines = ['«От нашего внимания не ускользнуло, что постулированное нами специфическое', 'спаривание сразу наводит на мысль о возможном механизме копирования', 'генетического материала»'];
+    const box = mk('rect', { x: 160, y: 630, width: 1280, height: 190, rx: 18, fill: CARD, stroke: COL.dim, 'stroke-width': 2.5 }, p);
+    put(box, { o: 0 }); show(box, m('quote'));
+    lines.forEach((s, i) => say(p, s, 200, 686 + i * 44, m('quote', .3 + i * .4), { size: 27, anchor: 'start' }));
+    pill(p, 'разделить цепи и достроить каждую — глава 6', DNA, 1080, 784, m('copy', 1), 24);
+  }],
+  ['bform', 'Параметры B-формы', (m) => {
+    const p = panel(0), x0 = 110, y0 = 430, P = 340;
+    say(p, 'B-форма — основная форма ДНК в клетке', 800, 90, .2, { size: 30, weight: 600 });
+    const h = helixSide(p, x0, y0, 2 * P, .3);
+    say(p, 'правая спираль', x0 + P, 240, m('right'), { size: 28, fill: DNA, weight: 700 });
+    // top view: one pair after another, each turned 36° further
+    const cx = 1200, cy = 440, R = 150;
+    const dial = mk('circle', { cx, cy, r: R, fill: 'none', stroke: COL.dim, 'stroke-width': 3, 'stroke-dasharray': '6 8' }, p);
+    put(dial, { o: 0 }); show(dial, m('turn', -.3));
+    say(p, 'вид вдоль оси', cx, cy - R - 26, m('turn', -.3), { size: 24, fill: COL.dim, weight: 600 });
+    const deg = say(p, '', cx, cy + R + 60, m('turn'), { size: 32, fill: DNA, weight: 700 });
+    const hgt = say(p, '', cx, cy + R + 108, m('rise'), { size: 30, weight: 600 });
+    const t0 = m('turn', .4), dt = (m('full') - t0) / 10;
+    for (let i = 0; i <= 10; i++) {   // the 11th pair lands on the first: a full turn
+      const b = RUNG_SEQ[i % 10], g = G(p, { x: cx, y: cy, r: -90 + 36 * i, o: 0 });
+      path(g, `M${-R + 20} 0H0`, { stroke: BASE[b], 'stroke-width': 9 });
+      mk('circle', { cx: -R + 20, cy: 0, r: 9, fill: COL.chalk }, g);   // strand 1 side: the turn is visible
+      path(g, `M0 0H${R - 20}`, { stroke: BASE[COMP[b]], 'stroke-width': 9 });
+      show(g, t0 + i * dt, .3);
+      if (i < 10) tw(g, { o: .35 }, t0 + (i + 1) * dt, .3);
+      prog(() => { deg.textContent = i ? `36° × ${i} = ${36 * i}°` : '0°'; }, t0 + i * dt, 0);
+      pulse(h.rungs[i + 1], t0 + i * dt, 1.3);
+    }
+    prog(() => { hgt.textContent = '3,4 Å × 10 = 34 Å — шаг'; }, m('pitch'), 0);
+    // brackets on the side view
+    const r1 = x0 + 1.5 * P / 10, r2 = x0 + 2.5 * P / 10;
+    hBracket(p, r1, r2, y0 + 150, '3,4 Å', COL.chalk, m('rise'), { up: false });
+    hBracket(p, h.crest(0, 0), h.crest(1, 0), y0 - 130, 'шаг 34 Å · 10 пар', DNA, m('pitch'));
+    vBracket(p, x0 + 2 * P + 30, y0 - 100, y0 + 100, '≈ 20 Å', COL.chalk, m('diam'));
+    say(p, 'в растворе ≈ 10,5 пары на виток (глава 5)', 800, 820, m('sol', 1.5), { size: 26, fill: COL.dim, weight: 600 });
+  }],
+  ['length', 'Длина ДНК', (m) => {
+    const p = panel(0);
+    // the cell
+    const cell = G(p, { o: 0 });
+    mk('rect', { x: 100, y: 230, width: 120, height: 60, rx: 30, fill: CARD, stroke: COL.chalk, 'stroke-width': 3 }, cell);
+    show(cell, .2);
+    say(p, 'кишечная палочка ≈ 2 мкм', 160, 330, m('cell'), { size: 24, weight: 600 });
+    say(p, '4 600 000 пар оснований', 800, 110, m('ecoli'), { size: 32, weight: 700 });
+    say(p, '× 3,4 Å ≈ 15 600 000 Å ≈ 1,6 мм', 800, 160, m('mul'), { size: 32, fill: DNA, weight: 700 });
+    // the chromosome pours out of the cell in a long snake
+    const ys = [260, 400, 540, 680, 800];
+    let d = 'M220 260';
+    ys.forEach((y, i) => {
+      const xa = i % 2 ? 1500 : 300, xb = i % 2 ? 300 : 1500;
+      if (i) d += `L${xa} ${y}`;
+      for (let x = xa, j = 0; i % 2 ? x > xb : x < xb; x += i % 2 ? -40 : 40, j++) d += `L${x + (i % 2 ? -40 : 40)} ${y + (j % 2 ? -10 : 10)}`;
+    });
+    draw(path(p, d, { stroke: DNA, 'stroke-width': 4 }, { d: 0 }), m('mul', .3), 3.5);
+    pill(p, 'ДНК почти в 800 раз длиннее клетки', DNA, 1100, 330, m('ratio'), 30);
+    say(p, 'масштаб условный', 1480, 860, m('mul', 1), { size: 22, fill: COL.dim, anchor: 'end' });
+    say(p, 'уплотнение — суперспирализация (глава 5)', 800, 470, m('pack'), { size: 28, weight: 600 });
+  }],
+  ['pairs', 'Комплементарность', (m) => {
+    const p = panel(0), x = 560, R = 46, L = 110, rl = 440, rr = 800;
+    say(p, 'комплементарность: A с T, G с C', 800, 90, .2, { size: 30, weight: 600 });
+    // backbones: the pairs fill the space between them exactly
+    const rails = G(p, { o: 0 });
+    [rl, rr].forEach(xr => path(rails, `M${xr} 160V790`, { stroke: COL.dim, 'stroke-width': 6 }));
+    show(rails, .3);
+    say(p, 'остов', rl, 820, .3, { size: 24, fill: COL.dim }); say(p, 'остов', rr, 820, .3, { size: 24, fill: COL.dim });
+    const at = flatPair(p, 'A', 'T', x, 240, m('at'), { R, L });
+    colorLine(p, [['A', BASE.A], ['='], ['T', BASE.T], ['  ·  2 водородные связи']], 900, 250, m('at', .5), { size: 30, anchor: 'start' });
+    const gc = flatPair(p, 'G', 'C', x, 400, m('gc'), { R, L });
+    colorLine(p, [['G', BASE.G], ['≡'], ['C', BASE.C], ['  ·  3 водородные связи']], 900, 410, m('gc', .5), { size: 30, anchor: 'start' });
+    say(p, 'пурин + пиримидин: ширина одна', 900, 330, m('width', .5), { size: 26, fill: OK, weight: 600, anchor: 'start' });
+    [240, 400].forEach(y => yesNo(p, true, 850, y, m('width', .3)));
+    // wrong pairs
+    const pp = flatPair(p, 'A', 'G', x, 570, m('pp'), { R, L, k: 0 });
+    const over = mk('rect', { x: rr, y: 520, width: pp.x2 - rr, height: 100, fill: NO, 'fill-opacity': .25 }, p);
+    put(over, { o: 0 }); show(over, m('pp', .6));
+    say(p, 'два пурина — слишком широко', 960, 580, m('pp', .6), { size: 28, fill: NO, weight: 600, anchor: 'start' });
+    const yy = flatPair(p, 'C', 'T', x, 720, m('yy'), { R, L, k: 0 });
+    const gap = mk('rect', { x: rl, y: 670, width: yy.x1 - rl, height: 100, fill: NO, 'fill-opacity': .25 }, p);
+    put(gap, { o: 0 }); show(gap, m('yy', .6));
+    say(p, 'два пиримидина — слишком узко', 960, 730, m('yy', .6), { size: 28, fill: NO, weight: 600, anchor: 'start' });
+    void at; void gc;
+  }],
+  ['melt', 'G–C прочнее', (m) => {
+    const p = panel(0), dx = 92;
+    say(p, 'G ≡ C прочнее: третья водородная связь', 1180, 150, m('third'), { size: 28, weight: 600 });
+    say(p, '+ сильнее стэкинг с соседними парами', 1180, 200, m('stack'), { size: 28, weight: 600 });
+    pill(p, 'GC-богатая ДНК плавится при большей температуре', DNA, 800, 830, m('heat'), 28);
+    const d1 = duplex(p, 'ATATAT', 160, 140, m('d1'), { dx, gap: 230, r: 22, step: .1, t1: m('d1', .3) });
+    say(p, '6 × 2 = 12 связей', 1180, 330, m('d1', 1.5), { size: 34, fill: COL.chalk, weight: 700 });
+    const d2 = duplex(p, 'ATGCGC', 160, 470, m('d2'), { dx, gap: 230, r: 22, step: .1, t1: m('d2', .3) });
+    say(p, '2 × 2 + 4 × 3 = 16 связей', 1180, 660, m('d2', 2), { size: 34, fill: DNA, weight: 700 });
+    d2.bonds.slice(2).forEach((b, i) => pulse(b, m('more', .2 + i * .1), 1.2));
+    void d1;
+  }],
+  ['q2', 'Быстрая проверка', () => {
+    const p = panel(0);
+    const d = duplex(p, 'GCGC', 520, 90, .2, { dx: 120, gap: 240, t1: null });
+    d.bot.units.forEach(u => show(u, .4)); show(d.bot.end3, .4); show(d.bot.end5, .4);
+  }, { ask: done => quiz({ x: 260, y: 440, w: 1080, cls: 'side', maxH: 420 }, [{
+    id: 'c-hbonds', prompt: ['Сколько водородных связей держат дуплекс?'], build: blanks(Q_HB),
+  }], done) }],
+  ['anti', 'Антипараллельность', (m) => {
+    const p = panel(0), x = 200, y = 190, dx = 110, seq = 'ATGCGC';
+    const d = duplex(p, seq, x, y, .2, { dx, gap: 240, t1: m('letters'), step: .35 });
+    arrowTo(p, x - 40, y - 60, x + 5 * dx + 40, y - 60, DNA, m('top'));
+    say(p, '5′ → 3′', x + 2.5 * dx, y - 80, m('top'), { size: 28, fill: DNA, weight: 700 });
+    const yb = y + 240 + 60;
+    const la = arrowTo(p, x + 5 * dx + 40, yb, x - 40, yb, COL.dim, m('low'), true);
+    const lt = say(p, '5′ → 3′ — в обратную сторону', x + 2.5 * dx, yb + 46, m('low'), { size: 28, fill: COL.chalk, weight: 700 });
+    hide(la, m('letters'), .3); hide(lt, m('letters'), .3);
+    // the text form on the right
+    const X = 1060;
+    const top = seqRow(p, seq, X, 300, m('build'), { dx: 48 });
+    const low = seqRow(p, d.comp.split('').reverse().join(''), X, 370, null, { ends: ['3′', '5′'], dx: 48 });
+    show(low.l, m('letters')); low.chips.forEach((c, i) => show(c, m('letters', i * .35), .3)); show(low.r, m('letters', 5 * .35));
+    readBack(p, low, d.comp.split('').reverse().join(''), X, 480, m('read', 1), { dx: 48 });
+    say(p, 'нижняя строка справа налево', X + 120, 545, m('read', 2.4), { size: 24, fill: COL.dim, weight: 600 });
+    arrowTo(p, x + 5 * dx + 40, yb, x - 40, yb, DNA, m('ch7'));
+    say(p, 'синтез только 5′ → 3′, а цепи навстречу друг другу — глава 7', 800, 790, m('ch7', .4), { size: 26, fill: DNA, weight: 600 });
+    void top;
+  }],
+  ['q3', 'Быстрая проверка', () => {
+    const p = panel(0);
+    const top = seqRow(p, 'AACG', 640, 200, .2, { dx: 70, size: 56 });
+    const low = G(p, { o: 0 });
+    T(low, '3′–', { x: 600, y: 290, size: 40, fill: COL.dim, weight: 700, anchor: 'end' });
+    [0, 1, 2, 3].forEach(i => T(low, '?', { x: 640 + i * 70, y: 290, size: 56, fill: COL.dim, weight: 700, anchor: 'middle' }));
+    T(low, '–5′', { x: 640 + 3 * 70 + 40, y: 290, size: 40, fill: COL.dim, weight: 700 });
+    show(low, .4);
+    void top;
+  }, { ask: done => quiz({ x: 260, y: 360, w: 1080, cls: 'side', maxH: 470 }, [{
+    id: 'c-comp53', prompt: ['Какая цепь комплементарна 5′-AACG-3′, если записать её от 5′ к 3′?'],
+    build: choice(['5′-CGTT-3′', '5′-TTGC-3′', '5′-GCAA-3′', '5′-AACG-3′'], 0,
+      'Под AACG стоит 3′-TTGC-5′; от 5′ к 3′ это CGTT.',
+      [null, 'Это нижняя строка слева направо, то есть от 3′ к 5′. От 5′ к 3′ её читают справа налево.',
+        'Это исходная цепь задом наперёд: буквы не заменены на комплементарные.', 'Это сама исходная цепь.']),
+  }], done) }],
+  ['grooves', 'Большая и малая бороздки', (m) => {
+    const p = panel(0), x0 = 100, y0 = 400;
+    const h = helixSide(p, x0, y0, 820, .2);
+    const c0 = h.crest(0, 0), c1 = h.crest(0, 1), c2 = h.crest(1, 0);
+    const shade = (xa, xb, color, t0, top = true) => { const e = mk('rect', { x: xa, y: top ? y0 - 112 : y0, width: xb - xa, height: 112, rx: 12, fill: color, 'fill-opacity': .16 }, p); put(e, { o: 0 }); show(e, t0); return e; };
+    shade(c1, c2, DNA, m('major')); hBracket(p, c1, c2, y0 - 130, 'большая ≈ 22 Å', DNA, m('major'));
+    shade(c0 + 170, c1 + 170, COL.whole, m('minor'), false); hBracket(p, c0 + 170, c1 + 170, y0 + 130, 'малая ≈ 12 Å', COL.whole, m('minor'), { up: false });
+    // end-on view of one pair: both sugars sit to one side
+    const cx = 1240, cy = 440, R = 170, a1 = (90 - 62) * Math.PI / 180, a2 = (90 + 62) * Math.PI / 180;
+    const pt = a => [cx + R * Math.cos(a), cy + R * Math.sin(a)];
+    const [s1x, s1y] = pt(a1), [s2x, s2y] = pt(a2);
+    const ring = mk('circle', { cx, cy, r: R, fill: 'none', stroke: COL.dim, 'stroke-width': 3, 'stroke-dasharray': '6 8' }, p);
+    put(ring, { o: 0 }); show(ring, m('end'));
+    say(p, 'пара с торца', cx, cy - R - 100, m('end'), { size: 26, fill: COL.dim, weight: 600 });
+    const pair = G(p, { o: 0 });
+    path(pair, `M${s2x} ${s2y}Q${(s2x + cx) / 2} ${cy - 40} ${cx} ${cy - 40}`, { stroke: BASE.A, 'stroke-width': 22 });
+    path(pair, `M${cx} ${cy - 40}Q${(s1x + cx) / 2} ${cy - 40} ${s1x} ${s1y}`, { stroke: BASE.T, 'stroke-width': 22 });
+    sugarDot(pair, s1x, s1y); sugarDot(pair, s2x, s2y);
+    show(pair, m('end', .4));
+    say(p, 'сахара', cx, cy + 92, m('end', 2), { size: 24, fill: COL.dim, weight: 600 });
+    const arc = (from, to, large, color, rr) => { const [ax, ay] = [cx + rr * Math.cos(from), cy + rr * Math.sin(from)], [bx, by] = [cx + rr * Math.cos(to), cy + rr * Math.sin(to)]; return `M${ax} ${ay}A${rr} ${rr} 0 ${large} 1 ${bx} ${by}`; };
+    const mi = path(p, arc(a1, a2, 0, COL.whole, R + 26), { stroke: COL.whole, 'stroke-width': 10 }, { d: 0 });
+    draw(mi, m('near'), .7);
+    say(p, 'малая', cx, cy + R + 82, m('near', .5), { size: 28, fill: COL.whole, weight: 700 });
+    const ma = path(p, arc(a2, a1 + 2 * Math.PI, 1, DNA, R + 26), { stroke: DNA, 'stroke-width': 10 }, { d: 0 });
+    draw(ma, m('far'), 1);
+    say(p, 'большая', cx, cy - R - 48, m('far', .7), { size: 28, fill: DNA, weight: 700 });
+  }],
+  ['pattern', 'Узоры в большой бороздке', (m) => {
+    const p = panel(0);
+    say(p, 'край пары, обращённый в большую бороздку', 800, 80, .2, { size: 28, fill: COL.dim, weight: 600 });
+    // a pair end-on as a bar: two bases, sugars on the minor side (down), pattern chips on the major side (up)
+    const bar = (x, b1, b2, pat, t0) => {
+      const g = G(p, { o: 0 });
+      mk('rect', { x, y: 230, width: 200, height: 54, rx: 10, fill: BASE[b1] }, g);
+      mk('rect', { x: x + 206, y: 230, width: 200, height: 54, rx: 10, fill: BASE[b2] }, g);
+      T(g, b1, { x: x + 100, y: 267, size: 32, fill: COL.board, weight: 700, anchor: 'middle' });
+      T(g, b2, { x: x + 306, y: 267, size: 32, fill: COL.board, weight: 700, anchor: 'middle' });
+      sugarDot(g, x + 60, 314); sugarDot(g, x + 346, 314);
+      show(g, t0);
+      pat.forEach((c, i) => chip(p, c, x + 53 + i * 100, 180, t0 + .5 + i * .45));
+    };
+    bar(140, 'A', 'T', ['А', 'Д', 'А', 'М'], m('at'));
+    bar(1050, 'G', 'C', ['А', 'А', 'Д', 'H'], m('gc'));
+    say(p, 'малая бороздка ↓', 800, 330, m('at', 2.5), { size: 24, fill: COL.whole, weight: 600 });
+    say(p, 'большая бороздка ↑', 800, 190, m('at', 2.5), { size: 24, fill: DNA, weight: 600 });
+    // reversed pairs
+    const revRow = (x, lab, pat, t0) => { say(p, lab, x - 30, 412, t0, { size: 30, weight: 700, anchor: 'end' }); pat.forEach((c, i) => chip(p, c, x + 30 + i * 70, 402, t0 + .2 + i * .15, { r: 20 })); };
+    revRow(400, 'T–A', ['М', 'А', 'Д', 'А'], m('rev'));
+    revRow(1250, 'C–G', ['H', 'Д', 'А', 'А'], m('rev', .8));
+    pill(p, 'в большой бороздке различимы все четыре пары', DNA, 800, 490, m('four'), 28);
+    say(p, 'в малой бороздке A–T и T–A почти одинаковы', 800, 550, m('minor'), { size: 26, fill: COL.whole, weight: 600 });
+    // a protein reads the patterns along the major groove
+    const pats = ['МАДА', 'АДАМ', 'HДАА', 'АДАМ', 'ААДH', 'МАДА'], bx = i => 230 + i * 200;
+    pats.forEach((s, i) => {
+      const g = G(p, { o: 0 });
+      mk('rect', { x: bx(i) - 80, y: 700, width: 160, height: 60, rx: 12, fill: CARD, stroke: COL.dim, 'stroke-width': 2.5 }, g);
+      T(g, s.split('').join(' '), { x: bx(i), y: 740, size: 28, weight: 700, anchor: 'middle' });
+      show(g, m('protein', -.2 + i * .1), .3);
+    });
+    const prot = G(p, { x: bx(0), y: 640, o: 0 });
+    mk('rect', { x: -100, y: -36, width: 200, height: 72, rx: 36, fill: mix(COL.board, PROT, .35), stroke: PROT, 'stroke-width': 3 }, prot);
+    T(prot, 'А А Д H', { y: 10, size: 28, fill: PROT, weight: 700, anchor: 'middle' });
+    show(prot, m('protein', .4));
+    say(p, 'белок ищет свой узор', 230, 580, m('protein', .4), { size: 24, fill: PROT, weight: 600 });
+    const t0 = m('protein', 1.2), dt = (m('stop') - t0) / 4;
+    for (let i = 1; i <= 4; i++) tw(prot, { x: bx(i) }, t0 + (i - 1) * dt, dt * .7, io);
+    yesNo(p, true, bx(4) + 130, 640, m('stop', .3), 1.3);
+    pulse(prot, m('stop', .2), 1.12);
+    say(p, 'А — акцептор · Д — донор · М — метил тимина · H — атом водорода', 800, 845, m('at', 1), { size: 22, fill: COL.dim });
+  }],
+  ['q4', 'Быстрая проверка', () => {
+    const p = panel(0), x0 = 260, y0 = 420;
+    const h = helixSide(p, x0, y0, 1080, .2);
+    const c0 = h.crest(1, 0), c1 = h.crest(1, 1), c2 = h.crest(2, 0);
+    const reg = (xa, xb) => { const e = mk('rect', { x: xa + 6, y: y0 - 125, width: xb - xa - 12, height: 125, rx: 14, fill: COL.chalk, 'fill-opacity': .07, stroke: COL.dim, 'stroke-width': 2, 'stroke-dasharray': '8 8' }, p); return e; };
+    S.minor = reg(c0, c1); S.major = reg(c1, c2); S.box = [c0, c1, c2];
+  }, { ask: done => {
+    const [c0, c1, c2] = S.box, y0 = 420;
+    quiz({ x: 260, y: 600, w: 1080, cls: 'side', maxH: 260 }, [{
+      id: 'c-groove', prompt: ['В какой бороздке белок различает все четыре варианта пары? Щёлкните её.'],
+      build: pickEls([{ el: S.minor, box: [c0, y0 - 125, c1 - c0, 125], label: 'узкая бороздка' }, { el: S.major, box: [c1, y0 - 125, c2 - c1, 125], label: 'широкая бороздка' }], 1,
+        'В большой бороздке узоры A–T, T–A, G–C и C–G разные.',
+        () => 'Это малая бороздка: там узоры A–T и T–A почти одинаковы.'),
+    }], done);
+  } }],
+  ['restrict', 'Рестриктазы и палиндромы', (m) => {
+    const p = panel(0), X = 300, dx = 64;
+    say(p, 'рестриктаза разрезает ДНК в строго определённом месте', 800, 90, .2, { size: 28, weight: 600 });
+    say(p, 'EcoRI узнаёт', X + 2.5 * dx, 170, m('eco'), { size: 28, fill: PROT, weight: 700 });
+    const top = seqRow(p, 'GAATTC', X, 250, m('eco', .4), { dx, size: 56, step: .25 });
+    const low = seqRow(p, 'CTTAAG', X, 330, null, { ends: ['3′', '5′'], dx, size: 56 });
+    show(low.l, m('lower')); low.chips.forEach((c, i) => show(c, m('lower', .3 + i * .2), .3)); show(low.r, m('lower', 1.4));
+    readBack(p, low, 'CTTAAG', X, 470, m('rot'), { dx, size: 56 });
+    say(p, 'нижняя цепь от 5′ к 3′', X + 2.5 * dx, 540, m('rot', 1.6), { size: 24, fill: COL.dim, weight: 600 });
+    yesNo(p, true, X + 6 * dx + 60, 455, m('rot', 2), 1.4);
+    pill(p, 'палиндром: обе цепи от 5′ к 3′ читаются одинаково', DNA, 560, 650, m('pal'), 28);
+    // the table
+    const row = (y, name, site, t0) => { say(p, name, 1080, y, t0, { size: 30, fill: PROT, weight: 700, anchor: 'start' }); colorLine(p, [['5′-'], ...site.split('').map(b => [b, BASE[b]]), ['-3′']], 1240, y, t0 + .2, { size: 30, anchor: 'start' }); };
+    say(p, 'фермент · узнаёт', 1080, 200, m('others', -.3), { size: 24, fill: COL.dim, weight: 600, anchor: 'start' });
+    row(260, 'EcoRI', 'GAATTC', m('others'));
+    row(330, 'BalI', 'TGGCCA', m('others', .5));
+    row(400, 'SmaI', 'CCCGGG', m('others', 1));
+  }],
+  ['freq', 'Как часто встречается участок', (m) => {
+    const p = panel(0), X = 360, dx = 150;
+    say(p, 'на каждом месте — одна из четырёх букв', 800, 110, m('one'), { size: 28, weight: 600 });
+    'GAATTC'.split('').forEach((b, i) => {
+      const g = G(p, { x: X + i * dx, y: 280, o: 0 });
+      mk('rect', { x: -56, y: -60, width: 112, height: 120, rx: 14, fill: CARD, stroke: COL.dim, 'stroke-width': 2.5 }, g);
+      T(g, b, { y: -6, size: 50, fill: BASE[b], weight: 700, anchor: 'middle' });
+      T(g, '1/4', { y: 42, size: 26, fill: COL.dim, weight: 700, anchor: 'middle' });
+      show(g, m('one', .4 + i * .15), .3);
+      pulse(g, m('six', .2 + i * .2), 1.12);
+    });
+    say(p, '(1/4)⁶ = 1/4096', 800, 460, m('six', 1.6), { size: 40, fill: DNA, weight: 700 });
+    say(p, 'в среднем один участок на 4096 пар', 800, 520, m('res'), { size: 30, weight: 600 });
+    say(p, '4 600 000 / 4096 ≈ 1100 мест', 800, 650, m('genome'), { size: 36, fill: DNA, weight: 700 });
+    say(p, 'на случайной последовательности длиной с хромосому кишечной палочки', 800, 700, m('genome', .4), { size: 24, fill: COL.dim });
+  }],
+  ['wrap', 'Итоги', (m) => {
+    const p = panel(0);
+    numbered(p, [['правило Чаргаффа: A = T, G = C', 'w1'], ['снимки Франклин + правило Чаргаффа → модель Уотсона и Крика', 'w2'],
+      ['B-форма: правая; 10 пар на виток (в растворе ≈ 10,5), шаг 34 Å, ⌀ ≈ 20 Å', 'w3'], ['большая бороздка: белки различают все четыре пары', 'w4']], m, 230, 130, 30);
+  }],
+  ['final1', 'Практика главы', () => { panel(0); }, { ask: done => quiz(SCREEN, [{
+    id: 'p-num', prompt: ['Впишите числа.'], build: blanks(P_NUM),
+  }], done, 'Практика главы   1 из 3') }],
+  ['final2', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-tf', prompt: ['Верно или неверно?'], build: grid(P_TF, TF, { multi: false, text: true }),
+  }], done, 'Практика главы   2 из 3') }],
+  ['final3', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-who', prompt: ['Кто это показал?'],
+    build: grid(P_WHO, [['ch', 'Чаргафф'], ['fr', 'Франклин'], ['wc', 'Уотсон и Крик']], { multi: false, text: true }),
+  }], done, 'Практика главы   3 из 3') }],
+  ['finish', 'Готово', () => {}, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+/* ---------- question data ---------- */
+const Q_COMP = [
+  { parts: ['Цитозина: ', { box: '22' }, ' %'], why: 'C = G = 22 %.', hint: 'Гуанин в паре с цитозином.' },
+  { parts: ['Аденина: ', { box: '28' }, ' %'], why: '100 − 44 = 56; A = T = 56 / 2 = 28 %.', hint: 'Вычтите G и C из 100 и поделите пополам.' },
+  { parts: ['Тимина: ', { box: '28' }, ' %'], why: 'T = A = 28 %.', hint: 'Тимина столько же, сколько аденина.' },
+];
+const Q_HB = [
+  { parts: ['5′-GCGC-3′ с комплементарной цепью: ', { box: '12' }], why: '4 пары G–C × 3 = 12.', hint: 'У пары G–C три связи.' },
+  { parts: ['5′-ATAT-3′ с комплементарной цепью: ', { box: '8' }], why: '4 пары A–T × 2 = 8.', hint: 'У пары A–T две связи.' },
+];
+const P_NUM = [
+  { parts: ['В ДНК 35 % аденина. Гуанина: ', { box: '15' }, ' %'], why: 'A + T = 70 %; на G и C остаётся 30 %, поровну: 15 %.', hint: 'A = T, G = C, всего 100 %.' },
+  { parts: ['Поворот пары относительно соседней в модели по волокнам: ', { box: '36' }, '°'], why: '360° / 10 пар = 36°.', hint: 'Полный оборот — 10 пар.' },
+  { parts: ['Длина участка из 1000 пар: ', { box: '3400' }, ' Å'], why: '1000 × 3,4 Å = 3400 Å.', hint: 'Подъём на пару 3,4 Å.' },
+  { parts: ['Водородных связей в дуплексе 5′-ATGC-3′: ', { box: '10' }], why: '2 пары A–T и 2 пары G–C: 2 × 2 + 2 × 3 = 10.', hint: 'A–T — две связи, G–C — три.' },
+  { parts: ['Участок EcoRI в случайной последовательности: в среднем один на ', { box: '4096' }, ' пар'], why: '(1/4)⁶ = 1/4096.', hint: 'Шесть мест, на каждом одна из четырёх букв.' },
+];
+const P_TF = [
+  { parts: ['Равенство A = T выполняется и в одноцепочечной ДНК.'], ans: ['f'], why: 'Нет: у фага φX174 с одной цепью основаниям не с кем спариваться.' },
+  { parts: ['Отношение (A + T)/(G + C) одинаково у всех организмов.'], ans: ['f'], why: 'Различается: бывает ДНК AT-богатая и GC-богатая.' },
+  { parts: ['Крест из пятен на снимке № 51 указал, что молекула — спираль.'], ans: ['t'], why: 'X-образный рисунок даёт спираль.' },
+  { parts: ['Пару G–C держат три водородные связи, A–T — две.'], ans: ['t'], why: 'G≡C и A=T.' },
+  { parts: ['Пара из двух пуринов шире нормальной пары.'], ans: ['t'], why: 'Два кольца + два кольца не помещаются между остовами.' },
+  { parts: ['Обе цепи двойной спирали идут от 5′ к 3′ в одну сторону.'], ans: ['f'], why: 'Цепи антипараллельны: навстречу друг другу.' },
+  { parts: ['Все четыре варианта пары белки различают в малой бороздке.'], ans: ['f'], why: 'В большой; в малой A–T и T–A почти одинаковы.' },
+  { parts: ['5′-GGATCC-3′ — палиндром.'], ans: ['t'], why: 'Комплементарная цепь 3′-CCTAGG-5′, от 5′ к 3′ — снова GGATCC.' },
+];
+const P_WHO = [
+  { parts: ['A = T и G = C в двуцепочечной ДНК любого вида'], ans: ['ch'], why: 'Правило Чаргаффа (1950–1953).' },
+  { parts: ['Состав ДНК различается от вида к виду'], ans: ['ch'], why: 'Это тоже показал Чаргафф, сравнивая виды.' },
+  { parts: ['Рентгенограммы волокон ДНК, снимок № 51'], ans: ['fr'], why: 'Розалинд Франклин, 1952.' },
+  { parts: ['Шаг спирали 34 Å на снимке № 51'], ans: ['fr'], why: 'Расстояние со снимка Франклин.' },
+  { parts: ['Две цепи, A в паре с T, G — с C'], ans: ['wc'], why: 'Модель Уотсона и Крика, 1953.' },
+  { parts: ['Спаривание подсказывает механизм копирования'], ans: ['wc'], why: 'Фраза из конца их статьи.' },
+];
+boot();
+</script>
+</body>
+</html>

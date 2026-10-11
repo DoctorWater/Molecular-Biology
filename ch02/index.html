@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Из чего собрана нуклеиновая кислота — ДНК и её копирование</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d2b27'/%3E%3Ctext x='32' y='45' text-anchor='middle' font-size='48' fill='%23f0b45a'%3E∞%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<script src="../lib/engine.js"></script>
+<script src="../lib/bio.js"></script>
+<script src="audio/ru/timings.js"></script>
+<script>
+'use strict';
+const CHAPTER = { number: 2, title: 'Из чего собрана нуклеиновая кислота', minutes: 11, language: 'ru', next: '../ch03/' };
+
+/* ---------- chapter drawing helpers (shared ones: lib/bio.js) ---------- */
+const BOND = { stroke: COL.chalk, 'stroke-width': 4 };
+function phosC(p, x, y, { o = 1, fill = CARD } = {}) {
+  const g = G(p, { x, y, o });
+  g.c = mk('circle', { r: 26, fill, stroke: COL.dim, 'stroke-width': 3 }, g);
+  T(g, 'P', { y: 10, size: 28, weight: 700, anchor: 'middle' });
+  return g;
+}
+// Furanose ring, skeletal: ring O on top, carbons 1′–4′ clockwise from the right, 5′ outside, up-left of 4′.
+const SC = { O: [0, -62], 1: [70, -18], 2: [44, 60], 3: [-44, 60], 4: [-70, -18], 5: [-112, -80] };
+const NUM = { 1: [86, 20, 'start'], 2: [58, 94, 'start'], 3: [-58, 94, 'end'], 4: [-86, 20, 'end'], 5: [-112, -98, 'middle'] };
+const sc = k => SC[k].join(' ');
+// A sugar: 2′ carries OH (ribose) or H (deoxy; both made, .oh2/.h2 swap them), 3′ an OH (.oh3, o3: false leaves the bond
+// for a linking O). free: OH at 1′ and 5′ too (.oh1, .oh5). nums: carbon numbers (.num[k]); .dot[k] carbon dots.
+function sugar(p, x, y, t0, { s = 1, deoxy = false, nums = true, free = false, o3 = true } = {}) {
+  const g = G(p, { x, y, s, o: t0 == null ? 1 : 0 });
+  path(g, `M${sc('O')}L${sc(1)}L${sc(2)}L${sc(3)}L${sc(4)}ZM${sc(4)}L${sc(5)}M${sc(3)}V108M${sc(2)}V108`, BOND);
+  atom(g, 'O', ...SC.O);
+  const lab = (str, x, y, o = 1, anchor = 'middle') => T(g, str, { x, y, size: 28, weight: 700, anchor, o });
+  if (o3) g.oh3 = lab('OH', -44, 140);
+  g.oh2 = lab('OH', 44, 140, deoxy ? 0 : 1);
+  g.h2 = lab('H', 44, 140, deoxy ? 1 : 0);
+  if (free) {
+    path(g, `M${sc(1)}H122M${sc(5)}H-150`, BOND);
+    g.oh1 = lab('OH', 128, -8, 1, 'start');
+    g.oh5 = lab('OH', -156, -70, 1, 'end');
+  }
+  g.dot = {}; g.num = {};
+  [1, 2, 3, 4, 5].forEach(k => {
+    g.dot[k] = mk('circle', { cx: SC[k][0], cy: SC[k][1], r: 7, fill: COL.chalk }, g);
+    if (nums) { const [nx, ny, a] = NUM[k]; g.num[k] = T(g, k + '′', { x: nx, y: ny, size: 28, fill: COL.dim, weight: 700, anchor: a }); }
+  });
+  if (t0 != null) show(g, t0);
+  return g;
+}
+// A nucleoside/nucleotide around its sugar: base b on 1′ (.base, .gly — the N-glycosidic bond), 5′-OH (.oh5) or up to three
+// phosphates (.ph[k] — α, β, γ; groups beyond nph start hidden), Greek labels .gr[k] (hidden).
+function nucleo(p, x, y, t0, { b = 'A', s = 1, deoxy = false, nph = 0, nums = false } = {}) {
+  const g = G(p, { x, y, s, o: t0 == null ? 1 : 0 });
+  g.sug = sugar(g, 0, 0, null, { deoxy, nums });
+  g.gly = path(g, `M${sc(1)}H128`, BOND);
+  const [ax, ay] = anchorOf(b);
+  g.base = baseRings(g, b, 128 - ax, -18 - ay, null);
+  path(g, `M${sc(5)}H-150`, BOND);
+  g.oh5 = T(g, 'OH', { x: -156, y: -70, size: 28, weight: 700, anchor: 'end', o: nph ? 0 : 1 });
+  g.ph = []; g.gr = [];
+  for (let k = 0; k < 3; k++) {
+    const px = -200 - 100 * k, q = G(g, { o: k < nph ? 1 : 0 });
+    path(q, `M${k ? px + 100 : -112} -80H${px}`, BOND);
+    atom(q, 'O', px + 50, -80);
+    q.p = phosC(q, px, -80);
+    g.ph.push(q);
+    g.gr.push(T(g, 'αβγ'[k], { x: px, y: -122, size: 32, weight: 700, anchor: 'middle', o: 0 }));
+  }
+  if (t0 != null) show(g, t0);
+  return g;
+}
+// Two linked sugars of a chain, drawn vertically 5′ (top) → 3′: top sugar A (.a), 3′-O (.o3), phosphate (.p), the bonds
+// O3–P (.l3) and P–O5 (.l5); the lower nucleotide with its 5′-O is one group (.lower, sugar .b). Bases bs[0], bs[1].
+function pair2(p, x, y, { s = 1, deoxy = false, bs = 'GC', R = 30 } = {}) {
+  const g = G(p, { x, y, s });
+  const dash = { stroke: COL.dim, 'stroke-width': 4, 'stroke-dasharray': '6 9' };
+  path(g, `M${sc(5)}V-150`, dash);
+  const base = (q, b, y0) => { path(q, `M70 ${y0 - 18}H118`, BOND); const [ax, ay] = anchorOf(b, R); baseRings(q, b, 118 - ax, y0 - 18 - ay, null, { R }); };
+  g.a = sugar(g, 0, 0, null, { deoxy, nums: false, o3: false });
+  base(g, bs[0], 0);
+  g.l3 = path(g, 'M-44 128L-90 205', BOND);
+  g.l5 = path(g, 'M-90 205L-112 268', BOND);
+  g.o3 = atom(g, 'O', -44, 128);
+  g.lower = G(g);
+  path(g.lower, 'M-112 268V300', BOND);
+  g.b = sugar(g.lower, 0, 380, null, { deoxy, nums: false, o3: false });
+  base(g.lower, bs[1], 380);
+  path(g.lower, 'M-44 508V560', dash);
+  atom(g.lower, 'O', -44, 508);
+  g.o5 = atom(g.lower, 'O', -112, 268);
+  g.p = phosC(g, -90, 205);
+  return g;
+}
+const arrowHead = (p, x, y, ang, color) => mk('path', { d: 'M0 0L-22 -11L-22 11Z', fill: color, transform: `translate(${x},${y}) rotate(${ang * 180 / Math.PI})` }, p);
+// A curved arrow (quadratic, control point cx, cy) drawn on at t0.
+function curveArrow(p, x1, y1, cx, cy, x2, y2, color, t0, dur = .7) {
+  const g = G(p);
+  draw(path(g, `M${x1} ${y1}Q${cx} ${cy} ${x2} ${y2}`, { stroke: color, 'stroke-width': 4.5 }, { d: 0 }), t0, dur);
+  const h = G(g, { o: 0 });
+  arrowHead(h, x2, y2, Math.atan2(y2 - cy, x2 - cx), color);
+  show(h, t0 + dur - .15, .2);
+  return g;
+}
+const strike = (p, x1, y1, x2, y2, t0) => draw(path(p, `M${x1} ${y1}L${x2} ${y2}`, { stroke: NO, 'stroke-width': 5 }, { d: 0 }), t0, .35);
+const swap = (a, b, t0, dur = .5) => { hide(a, t0, dur); show(b, t0, dur); };
+const ring = (p, x, y, r, color, t0) => { const e = mk('circle', { cx: x, cy: y, r, fill: 'none', stroke: color, 'stroke-width': 4 }, p); put(e, { o: 0 }); show(e, t0); return e; };
+
+/* ---------- beats: [id, title, run(m, D), { ask }?] ---------- */
+const BEATS = [
+  ['intro', 'Из чего собрана нуклеиновая кислота', (m, D) => {
+    const g = G(scene, { o: 0, y: 24 });
+    T(g, 'Раздел 1 «Открытие и строение ДНК» · Глава 2', { x: 800, y: 330, size: 28, fill: COL.dim, anchor: 'middle' });
+    T(g, 'Из чего собрана нуклеиновая кислота', { x: 800, y: 440, size: 74, weight: 600, anchor: 'middle' });
+    tw(g, { o: 1, y: 0 }, .2, 1.1, out);
+    const r = say(scene, 'основание, сахар, фосфат — и цепь', 800, 560, m('sub'), { size: 34, fill: COL.dim });
+    tw(g, { o: 0, y: -24 }, D - .9, .8); hide(r, D - .9, .8);
+  }],
+  ['alkali', 'Опыт со щёлочью', (m) => {
+    const p = panel(0), xs = [520, 1080], kinds = [['РНК', RNA, 'rna'], ['ДНК', DNA, 'dna']];
+    say(p, 'две пробирки', 800, 110, .2, { size: 30, fill: COL.dim, weight: 600 });
+    kinds.forEach(([lab, c, mark], k) => {
+      const x = xs[k], t0 = m(mark), t = tube(p, x, 190, t0, { w: 140, h: 380 });
+      say(p, lab, x, 630, t0, { size: 40, fill: c, weight: 700 });
+      t.fill(70, 380, COL.chalk, m('koh', .3 + k * .2), .16);
+      const ch = G(p, { o: 0 }), beads = [];
+      const pts = [...Array(8)].map((_, i) => [x + (i % 2 ? 22 : -22), 270 + i * 36]);
+      const links = pts.slice(1).map(([bx, by], i) => path(ch, `M${pts[i][0]} ${pts[i][1]}L${bx} ${by}`, { stroke: c, 'stroke-width': 5 }));
+      pts.forEach(([bx, by]) => beads.push(mk('circle', { cx: bx, cy: by, r: 13, fill: c }, ch)));
+      show(ch, t0 + .3);
+      if (k === 0) {   // RNA falls apart into single nucleotides
+        links.forEach((l, i) => hide(l, m('night', i * .08), .3));
+        const spot = [[-40, 300], [30, 330], [-10, 380], [44, 420], [-46, 450], [12, 470], [-20, 520], [40, 510]];
+        beads.forEach((b, i) => tw(b, { x: spot[i][0] - (pts[i][0] - x), y: spot[i][1] - pts[i][1] }, m('night', .3 + i * .06), .9));
+        say(p, 'отдельные нуклеотиды', x, 690, m('night', 1), { size: 28, fill: RNA, weight: 600 });
+      } else {
+        yesNo(p, true, x - 80, 682, m('intact'));
+        say(p, 'цепи целы', x - 50, 690, m('intact'), { size: 28, fill: DNA, weight: 600, anchor: 'start' });
+      }
+    });
+    say(p, 'разбавленная щёлочь: 0,3 М KOH, 37 °C, ночь', 800, 160, m('koh'), { size: 28, weight: 600 });
+    pill(p, 'разница — один атом кислорода в сахаре каждого звена', DNA, 800, 800, m('atom', .4), 32);
+  }],
+  ['steps', 'Четыре ступени', (m) => {
+    const p = panel(0), x0 = 90;
+    const rows = [['основание', 'аденин', 'base'], ['нуклеозид', 'основание + сахар', 'sugar'], ['нуклеотид', 'нуклеозид + фосфат', 'phos'], ['полинуклеотид', 'цепь нуклеотидов', 'chain']];
+    rows.forEach(([name, sub, mark], i) => {
+      const y = 230 + i * 150, g = G(p, { o: 0 });
+      mk('circle', { cx: x0 + 22, cy: y - 12, r: 22, fill: DNA }, g);
+      T(g, String(i + 1), { x: x0 + 22, y: -2 + y, size: 26, fill: COL.board, weight: 700, anchor: 'middle' });
+      T(g, name, { x: x0 + 62, y, size: 36, weight: 700 });
+      T(g, sub, { x: x0 + 62, y: y + 40, size: 24, fill: COL.dim });
+      show(g, m(mark));
+    });
+    const n = nucleo(p, 960, 420, .2, { b: 'A', s: 1.15 });
+    put(n.sug, { o: 0, x: -260 }); put(n.gly, { o: 0 }); put(n.oh5, { o: 0 });
+    tw(n.sug, { o: 1, x: 0 }, m('sugar'), .8, out); show(n.gly, m('sugar', .6)); show(n.oh5, m('sugar', .6));
+    const a = put(G(n.ph[0]), { o: 0 });
+    hide(n.oh5, m('phos')); tw(n.ph[0], { o: 1 }, m('phos', .2), .6);
+    const cap = [['аденин', BASE.A, 'base'], ['аденозин', COL.chalk, 'sugar'], ['аденозинмонофосфат, АМФ', COL.chalk, 'phos']];
+    const caps = cap.map(([s, c, mark]) => say(p, s, 960, 700, m(mark, .4), { size: 40, fill: c, weight: 700 }));
+    hide(caps[0], m('sugar', .2), .3); hide(caps[1], m('phos', .2), .3);
+    // stage 4: the molecule gives way to a chain of nucleotides
+    hide(n, m('chain'), .4); hide(caps[2], m('chain'), .4);
+    strand(p, 'ATGCCTAG', 660, 470, m('chain', .4), { dx: 100, step: .12 });
+    say(p, 'цепь ДНК или РНК', 1010, 620, m('chain', 1.6), { size: 34, weight: 600 });
+  }],
+  ['q1', 'Быстрая проверка', () => {
+    const p = panel(0);
+    S.m1 = nucleo(p, 300, 300, .2, { b: 'A', s: .72 });
+    S.m2 = baseRings(p, 'G', 820, 290, .3, { R: 48 });
+    S.m3 = nucleo(p, 1300, 300, .4, { b: 'C', s: .72, nph: 1 });
+  }, { ask: done => quiz({ x: 200, y: 560, w: 1200, cls: 'side', maxH: 320 }, [
+    { id: 'c-stage1', prompt: ['Щёлкните нуклеозид.'],
+      build: pickEls([{ el: S.m1, box: [170, 180, 340, 240], label: 'основание и сахар' }, { el: S.m2, box: [680, 220, 210, 140], label: 'одно основание' }, { el: S.m3, box: [1110, 180, 340, 240], label: 'основание, сахар и фосфат' }], 0,
+        'Нуклеозид — основание + сахар, без фосфата.',
+        i => i === 1 ? 'Это одно основание (гуанин): сахара нет.' : 'Здесь есть фосфат у 5′-углерода — это уже нуклеотид.') },
+    { id: 'c-stage2', prompt: ['А теперь щёлкните нуклеотид.'],
+      build: pickEls([{ el: S.m1, box: [170, 180, 340, 240], label: 'основание и сахар' }, { el: S.m2, box: [680, 220, 210, 140], label: 'одно основание' }, { el: S.m3, box: [1110, 180, 340, 240], label: 'основание, сахар и фосфат' }], 2,
+        'Нуклеотид — нуклеозид + фосфат: здесь фосфат у 5′-углерода.',
+        i => i === 1 ? 'Это одно основание: нет ни сахара, ни фосфата.' : 'Здесь основание и сахар, а фосфата нет — это нуклеозид.') },
+  ], done) }],
+  ['bases', 'Пурины и пиримидины', (m) => {
+    const p = panel(0), y = 340, R = 54;
+    say(p, 'пять оснований, две группы', 800, 90, .2, { size: 30, fill: COL.dim, weight: 600 });
+    const B = {};
+    say(p, 'пурины · 2 кольца', 470, 190, m('pur'), { size: 32, weight: 700 });
+    [['A', 400], ['G', 680]].forEach(([b, x], i) => {
+      B[b] = baseRings(p, b, x, y, m('pur', i * .4), { R });
+      say(p, BNAME[b], x - 40, y + 100, m('pur', i * .4), { size: 28, fill: BASE[b], weight: 700 });
+    });
+    ['A', 'G'].forEach(b => { tw(B[b].ring6, { 'a_stroke-width': 9 }, m('six'), .3); tw(B[b].ring6, { 'a_stroke-width': 4 }, m('six', .6), .4); });
+    ['A', 'G'].forEach(b => { tw(B[b].ring5, { c_fill: mix(COL.board, BASE[b], .55) }, m('five'), .5); });
+    say(p, 'пиримидины · 1 кольцо', 1200, 190, m('pyr'), { size: 32, weight: 700 });
+    [['C', 1000], ['T', 1200], ['U', 1400]].forEach(([b, x], i) => {
+      B[b] = baseRings(p, b, x, y, m('pyr', .3 + i * .35), { R });
+      say(p, BNAME[b], x, y + 100, m('pyr', .3 + i * .35), { size: 28, fill: BASE[b], weight: 700 });
+    });
+    // which bases go into DNA and RNA
+    const row = (lab, c, yy, t0) => say(p, lab, 560, yy + 12, t0, { size: 34, fill: c, weight: 700, anchor: 'end' });
+    row('ДНК', DNA, 590, m('both')); row('РНК', RNA, 690, m('both'));
+    const chipB = (b, x, yy, t0) => { const g = G(p, { x, y: yy, o: 0 }); mk('circle', { r: 30, fill: BASE[b] }, g); T(g, b, { y: 11, size: 32, fill: COL.board, weight: 700, anchor: 'middle' }); show(g, t0); return g; };
+    ['A', 'G', 'C'].forEach((b, i) => { chipB(b, 640 + i * 90, 590, m('both', .3 + i * .2)); chipB(b, 640 + i * 90, 690, m('both', .3 + i * .2)); });
+    chipB('T', 910, 590, m('t'));
+    chipB('U', 910, 690, m('u'));
+    tw(B.T.me, { s: 1.4 }, m('methyl'), .3); tw(B.T.me, { s: 1 }, m('methyl', .4), .4);
+    colorLine(p, [['T', BASE.T], [' = '], ['U', BASE.U], [' + метильная группа CH₃']], 1240, 600, m('methyl', .3), { size: 30 });
+    say(p, 'исключение: в транспортных РНК бывает и T', 1240, 700, m('trna'), { size: 26, fill: COL.dim });
+    pill(p, 'глава 3: в двойной спирали пурин — напротив пиримидина', DNA, 800, 820, m('pair'), 28);
+  }],
+  ['q2', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz(WIDE, [{
+    id: 'c-rings', prompt: ['Пурин или пиримидин?'],
+    build: grid(Q_RINGS, [['pu', 'Пурин · 2 кольца'], ['py', 'Пиримидин · 1 кольцо']], { multi: false, text: true }),
+  }], done) }],
+  ['tautomer', 'Таутомеры и ошибки', (m) => {
+    const p = panel(0), R = 70, gx = 380, cy = 400, px = 790, ys = [cy - 50, cy, cy + 50];
+    say(p, 'таутомеры: атом H перескакивает на другое место', 800, 90, .2, { size: 30, fill: COL.dim, weight: 600 });
+    baseRings(p, 'G', gx, cy, .3, { R });
+    const gr = G(p);
+    // the face of G: ring atoms O, N, N (x 470), hydrogens of donors at x 505
+    ['O', 'N', 'N'].forEach((a, i) => { path(gr, `M${gx + 60} ${Math.max(cy - 35, Math.min(cy + 35, ys[i]))}L${gx + 76} ${ys[i]}`, { stroke: BASE.G, 'stroke-width': 4 }); atom(gr, a, gx + 90, ys[i], { size: 26 }); });
+    const hTop = atom(gr, 'H', gx + 124, ys[1], { size: 26 });   // the H that hops: on N1 (keto), then on O6 (enol)
+    atom(gr, 'H', gx + 124, ys[2], { size: 26 });
+    const formK = say(p, 'гуанин · кето-аминная форма', gx - 40, 540, .5, { size: 28, fill: BASE.G, weight: 700 });
+    const formE = say(p, 'гуанин · енольная форма', gx - 40, 540, 99, { size: 28, fill: BASE.G, weight: 700 });
+    // partner: C (H on top, N, O) or T (O, H on N, O)
+    const partner = (b, face, t0) => {
+      const g = G(p, { o: 0 });
+      baseRings(g, b, px, cy, null, { R });
+      face.forEach((a, i) => {
+        path(g, `M${px - 60} ${Math.max(cy - 35, Math.min(cy + 35, ys[i]))}L${px - 76} ${ys[i]}`, { stroke: BASE[b], 'stroke-width': 4 });
+        if (a === 'H') { atom(g, 'N', px - 90, ys[i], { size: 26 }); atom(g, 'H', px - 124, ys[i], { size: 26 }); }
+        else atom(g, a, px - 90, ys[i], { size: 26 });
+      });
+      say(g, BNAME[b], px, 540, null, { size: 28, fill: BASE[b], weight: 700 });
+      if (t0 != null) show(g, t0);
+      return g;
+    };
+    const hb = (col, y1, x1, x2) => path(p, `M${x1} ${y1}H${x2}`, { stroke: col, 'stroke-width': 3.5, 'stroke-dasharray': '8 7' }, { o: 0 });
+    // keto G – C: O···H–N, N–H···N, N–H···O
+    const c = partner('C', ['H', 'N', 'O'], m('keto'));
+    const kb = [hb(COL.chalk, ys[0], gx + 108, px - 140), hb(COL.chalk, ys[1], gx + 140, px - 108), hb(COL.chalk, ys[2], gx + 140, px - 108)];
+    kb.forEach((l, i) => show(l, m('keto', .6 + i * .15), .3));
+    // the hop
+    kb.forEach(l => hide(l, m('hop'), .3));
+    tw(hTop, { y: ys[0] }, m('hop', .3), .8, back);
+    swap(formK, formE, m('hop', .6));
+    // with C the faces clash: H against H, N against N
+    const sx = G(p);
+    [ys[0], ys[1]].forEach(y => { const x = (gx + 124 + px - 124) / 2; strike(sx, x - 16, y - 16, x + 16, y + 16, m('clash', .4)); strike(sx, x + 16, y - 16, x - 16, y + 16, m('clash', .5)); });
+    hide(sx, m('thy'), .3);
+    tw(c, { o: 0, y: 140 }, m('thy', -.2), .6);
+    const t = partner('T', ['O', 'H', 'O'], null);
+    put(t, { y: -140 }); tw(t, { o: 1, y: 0 }, m('thy', .2), .7, out);
+    [hb(COL.chalk, ys[0], gx + 140, px - 108), hb(COL.chalk, ys[1], gx + 108, px - 140), hb(COL.chalk, ys[2], gx + 140, px - 108)].forEach((l, i) => show(l, m('thy', .9 + i * .15), .3));
+    say(p, 'неправильная пара G · T', (gx + px) / 2, 650, m('thy', 1.3), { size: 28, fill: NO, weight: 700 });
+    // two rounds of copying: G–C → G·T → A–T
+    const X = 1300, pr = (parts, y, t0) => colorLine(p, parts, X, y, t0, { size: 44, weight: 700 });
+    say(p, 'копирование ДНК', X, 190, m('copy', -.3), { size: 28, fill: COL.dim, weight: 600 });
+    pr([['G', BASE.G], [' – ', COL.dim], ['C', BASE.C]], 270, m('copy', -.3));
+    arrowTo(p, X, 300, X, 380, COL.dim, m('copy', .3));
+    say(p, '1', X + 30, 350, m('copy', .3), { size: 24, fill: COL.dim, anchor: 'start' });
+    pr([['G', BASE.G], [' · ', NO], ['T', BASE.T]], 440, m('copy', .7));
+    arrowTo(p, X, 470, X, 550, COL.dim, m('round'));
+    say(p, '2', X + 30, 520, m('round'), { size: 24, fill: COL.dim, anchor: 'start' });
+    pr([['A', BASE.A], [' – ', COL.dim], ['T', BASE.T]], 610, m('round', 2.4));
+    pill(p, 'спонтанная мутация G–C → A–T', NO, X, 720, m('mut'), 28);
+  }],
+  ['sugar', 'Рибоза и дезоксирибоза', (m) => {
+    const p = panel(0), x = 640, y = 430, s = 1.9;
+    say(p, 'пентоза: кольцо из 4 атомов углерода и 1 кислорода', 800, 100, .2, { size: 30, weight: 600 });
+    const g = sugar(p, x, y, .3, { s, free: true });
+    [1, 2, 3, 4, 5].forEach((k, i) => { put(g.num[k], { o: 0 }); show(g.num[k], m('num', .5 + i * .62), .3); pulse(g.dot[k], m('num', .5 + i * .62), 1.8); });
+    say(p, 'штрих: номер атома сахара', 1160, 300, m('prime'), { size: 28, fill: COL.dim, weight: 600 });
+    say(p, 'у атомов основания — номера без штриха', 1160, 340, m('prime', .6), { size: 24, fill: COL.dim });
+    const at2 = [x + 44 * s, y + 130 * s];
+    const r2 = ring(p, ...at2, 46, RNA, m('ribo'));
+    const rib = say(p, 'рибоза — в РНК', 1160, 480, m('ribo'), { size: 36, fill: RNA, weight: 700 });
+    say(p, 'при 2′: OH', 1160, 525, m('ribo', .3), { size: 28, fill: RNA });
+    swap(g.oh2, g.h2, m('deoxy', .3));
+    tw(r2, { c_stroke: DNA }, m('deoxy', .3), .5);
+    say(p, 'дезоксирибоза — в ДНК', 1160, 620, m('deoxy'), { size: 36, fill: DNA, weight: 700 });
+    say(p, 'при 2′: H', 1160, 665, m('deoxy', .3), { size: 28, fill: DNA });
+    tw(rib, { o: .5 }, m('deoxy'), .4);
+    pill(p, '«дезокси» = «без кислорода»', DNA, 1160, 790, m('name'), 30);
+    pulse(r2, m('name', 2), 1.25);
+  }],
+  ['nucleoside', 'Нуклеозид', (m) => {
+    const p = panel(0), s = 1.3, x = 500, y = 470;
+    say(p, 'нуклеозид = основание + сахар', 800, 100, .2, { size: 32, weight: 600 });
+    const n = nucleo(p, x, y, .3, { b: 'A', s, nums: true });
+    const bx = st(n.base).x;
+    put(n.base, { x: bx + 260, o: 0 }); put(n.gly, { o: 0 });
+    tw(n.base, { x: bx, o: 1 }, .9, .9, out); show(n.gly, 1.6, .3);
+    pulse(n.sug.num[1], 1.7, 1.6);
+    const lab = G(p, { o: 0 });
+    path(lab, `M${x + 84 * s} ${y - 26 * s}L${x + 84 * s} ${y - 92 * s}`, { stroke: COL.dim, 'stroke-width': 2.5 });
+    T(lab, 'N-гликозидная связь', { x: x + 84 * s, y: y - 102 * s, size: 28, weight: 700, anchor: 'middle' });
+    show(lab, m('bond'));
+    tw(n.gly, { 'a_stroke-width': 9 }, m('bond', .2), .3); tw(n.gly, { 'a_stroke-width': 4 }, m('bond', .8), .4);
+    const nameR = say(p, 'аденозин', x + 90, 750, 1.8, { size: 44, fill: COL.chalk, weight: 700 });
+    const nameD = say(p, 'дезоксиаденозин', x + 90, 750, 99, { size: 44, fill: COL.chalk, weight: 700 });
+    [['аденозин', 'A'], ['гуанозин', 'G'], ['цитидин', 'C'], ['уридин', 'U']].forEach(([s2, b], i) => say(p, s2, 1100, 250 + i * 56, m('names', i * .7), { size: 32, fill: BASE[b], weight: 700, anchor: 'start' }));
+    swap(n.sug.oh2, n.sug.h2, m('dz', .5)); swap(nameR, nameD, m('dz', 1.6));
+    say(p, 'сахар — дезоксирибоза: + «дезокси»', 1100, 520, m('dz'), { size: 26, fill: DNA, anchor: 'start' });
+    colorLine(p, [['тимидин', BASE.T], [' = дезокситимидин']], 1100, 610, m('thy', 1.5), { size: 30, anchor: 'start' });
+    say(p, 'с рибозой — риботимидин, редок', 1100, 654, m('thy', 3), { size: 22, fill: COL.dim, anchor: 'start' });
+  }],
+  ['nucleotide', 'Нуклеотид и dNTP', (m) => {
+    const p = panel(0), s = 1.15, x = 960, y = 470;
+    say(p, 'нуклеотид = нуклеозид + фосфат', 800, 100, .2, { size: 32, weight: 600 });
+    const n = nucleo(p, x, y, .3, { b: 'A', s, nums: true });
+    hide(n.oh5, m('ester'), .3); show(n.ph[0], m('ester', .3));
+    const el = say(p, 'эфирная связь у 5′', x - 156 * s, y - 180 * s, m('ester', 1), { size: 26, fill: COL.dim, weight: 600 });
+    const capM = say(p, 'аденозинмонофосфат, АМФ', x - 60, 740, m('mono'), { size: 40, weight: 700 });
+    // three phosphates: dATP
+    hide(el, m('tri'), .3); hide(capM, m('tri'), .3);
+    show(n.ph[1], m('tri', .3)); show(n.ph[2], m('tri', .6));
+    swap(n.sug.oh2, n.sug.h2, m('tri', 1));
+    say(p, 'дезоксиаденозинтрифосфат, dATP', x - 60, 740, m('tri', .6), { size: 40, weight: 700 });
+    say(p, 'dNTP: dATP · dGTP · dCTP · dTTP', x - 60, 800, m('tri', 2.6), { size: 28, fill: DNA, weight: 600 });
+    say(p, 'по порядку от сахара', x - 300 * s, y - 175 * s, m('greek'), { size: 24, fill: COL.dim });
+    ['a', 'b', 'g'].forEach((mk2, k) => { show(n.gr[k], m(mk2)); pulse(n.ph[k].p, m(mk2), 1.25); });
+  }],
+  ['q3', 'Быстрая проверка', () => {
+    const p = panel(0);
+    S.sg = sugar(p, 560, 450, .2, { s: 1.7, free: true });
+  }, { ask: done => {
+    const c = k => [560 + SC[k][0] * 1.7, 450 + SC[k][1] * 1.7];
+    const items = [1, 2, 3, 4, 5].map(k => { const [x, y] = c(k); return { el: S.sg.dot[k], box: [x - 34, y - 34, 68, 68], label: `углерод ${k}′` }; });
+    const lit = k => () => { fx(S.sg.dot[k], { c_fill: OK, a_r: 12 }, 0, .4); pulseFx(S.sg.num[k], 1.3); };
+    quiz({ x: 1020, y: 160, w: 520, cls: 'side' }, [
+      { id: 'c-c1', prompt: ['К какому углероду сахара присоединяется основание? Щёлкните его.'],
+        build: pickEls(items, 0, 'Основание — к 1′, N-гликозидной связью; OH при 1′ уходит.',
+          i => ['', 'При 2′ стоит OH (рибоза) или H (дезоксирибоза).', 'OH при 3′ потом связывается со следующим нуклеотидом.', '4′ — в кольце, к нему примыкает 5′.', 'К 5′ присоединяется фосфат, а основание — с другой стороны кольца.'][i], lit(1)) },
+      { id: 'c-c5', prompt: ['А к какому — фосфат нуклеотида?'],
+        build: pickEls(items, 4, 'Фосфат — к 5′, эфирной связью с его OH.',
+          i => ['К 1′ присоединено основание.', 'При 2′ стоит OH или H, фосфата там нет.', 'OH при 3′ остаётся свободным: к нему присоединится следующий нуклеотид.', '4′ — в кольце; фосфат у 5′, который выходит из кольца.'][i], lit(5)) },
+    ], done);
+  } }],
+  ['bond', 'Фосфодиэфирная связь', (m) => {
+    const p = panel(0), sx = 900, sy = 200;
+    const g = G(p, { x: sx, y: sy });
+    const dash = { stroke: COL.dim, 'stroke-width': 4, 'stroke-dasharray': '6 9' };
+    path(g, `M${sc(5)}V-150`, dash);
+    T(g, 'цепь', { x: -130, y: -110, size: 24, fill: COL.dim, anchor: 'end' });
+    const a = sugar(g, 0, 0, .2, { deoxy: true, nums: false });
+    path(g, 'M70 -18H118', BOND); baseRings(g, 'G', 118 + 1.817 * 30, -18 - .809 * 30, .2, { R: 30 });
+    const end = ring(g, -44, 130, 34, DNA, m('end'));
+    const lOH = say(g, '3′-OH', -100, 150, m('end', .3), { size: 26, fill: DNA, weight: 700, anchor: 'end' });
+    // incoming dNTP: sugar B 380 below, α–β–γ to the left of α at (-90, 205)
+    const inc = G(g, { x: 420 });
+    const b = sugar(inc, 0, 380, null, { deoxy: true, nums: false });
+    path(inc, 'M70 362H118', BOND); baseRings(inc, 'C', 118 + .866 * 30, 362 - 15, null, { R: 30 });
+    path(inc, 'M-112 300V268L-90 205', BOND); atom(inc, 'O', -112, 268);
+    const al = phosC(inc, -90, 205);
+    const pp = G(inc);
+    const ppl0 = path(pp, 'M-90 205H-290', BOND); atom(pp, 'O', -140, 205); atom(pp, 'O', -240, 205);
+    const be = phosC(pp, -190, 205), ga = phosC(pp, -290, 205);
+    phosC(inc, -90, 205);   // α on top of the β bond line
+    const gl = ['α', 'β', 'γ'].map((s, k) => T(k ? pp : inc, s, { x: [-50, -190, -290][k], y: [252, 162, 162][k], size: 30, weight: 700, anchor: 'middle' }));
+    put(inc, { o: 0 }); show(inc, .4);
+    const lab = say(p, 'входящий dNTP', sx + 420, sy + 600, .6, { size: 28, fill: COL.dim, weight: 600 });
+    hide(lab, m('attack'), .3);
+    tw(inc, { x: 0 }, m('attack'), 1.2, io);
+    const atk = curveArrow(g, -60, 150, -40, 190, -66, 196, DNA, m('attack', 1.1), .5);
+    // α stays as a bridge: O3–P bond, the H of 3'-OH leaves
+    const l3 = path(g, 'M-44 128L-90 205', { stroke: DNA, 'stroke-width': 6 }, { d: 0 });
+    draw(l3, m('bridge'), .5);
+    swap(a.oh3, atom(g, 'O', -44, 128, { o: 0 }), m('bridge'));
+    hide(end, m('bridge')); hide(lOH, m('bridge'), .3); hide(atk, m('bridge'), .3);
+    // β + γ leave as pyrophosphate
+    tw(pp, { x: -120, y: -150 }, m('ppi'), 1, io);
+    const ppl = say(p, 'PPᵢ — пирофосфат', sx - 330, sy + 120, m('ppi', .8), { size: 28, weight: 700 });
+    const fl = G(p, { x: sx - 140, y: sy + 205, o: 0 });
+    path(fl, 'M0 -26L8 -6L26 -4L10 8L16 28L0 14L-16 28L-10 8L-26 -4L-8 -6Z', { fill: COL.int });
+    tw(fl, { o: 1 }, m('energy'), .2); tw(fl, { o: 0, s: 1.8 }, m('energy', 1.2), .8);
+    const en = say(p, 'разрыв α–β даёт энергию', sx - 330, sy + 230, m('energy', .3), { size: 26, fill: COL.int, weight: 600 });
+    hide(en, m('split'), .3);
+    // pyrophosphatase splits PPi: no way back
+    hide(ppl, m('split'), .3); hide(gl[1], m('split'), .3); hide(gl[2], m('split'), .3);
+    say(p, 'пирофосфатаза', sx - 330, sy + 0, m('split'), { size: 28, fill: PROT, weight: 700 });
+    tw(ga, { x: -330 }, m('split', .4), .7);
+    pp.querySelectorAll('g').forEach((e, i) => i < 2 && hide(e, m('split', .4), .3));   // two free phosphates remain
+    hide(ppl0, m('split', .4), .3);
+    say(p, '2 фосфата', sx - 330, sy + 130, m('split', 1), { size: 26, weight: 600 });
+    arrowTo(p, sx - 380, sy + 170, sx - 200, sy + 330, COL.dim, m('back'), true);
+    yesNo(p, false, sx - 290, sy + 250, m('back', .3), 1.4);
+    say(p, 'обратно — практически нет', sx - 330, sy + 380, m('back', .5), { size: 26, fill: NO, weight: 600 });
+    // the phosphodiester bond
+    tw(al.c, { c_stroke: DNA, 'a_stroke-width': 6 }, m('name'), .5);
+    say(p, 'фосфодиэфирная связь', sx + 260, sy + 210, m('name', 1), { size: 34, fill: DNA, weight: 700, anchor: 'start' });
+    say(p, '3′ — O — P — O — 5′', sx + 260, sy + 260, m('name', 1.6), { size: 30, weight: 600, anchor: 'start' });
+    say(p, 'сахар предыдущего · сахар своего', sx + 260, sy + 300, m('name', 2.2), { size: 22, fill: COL.dim, anchor: 'start' });
+  }],
+  ['count', 'Сколько связей в цепи', (m) => {
+    const p = panel(0), n = 10, t0 = m('grow');
+    say(p, 'каждый новый нуклеотид — одна фосфодиэфирная связь', 800, 110, .2, { size: 30, weight: 600 });
+    const st2 = strand(p, 'ATGCATTGCA', 260, 420, t0, { dx: 120, step: .4 });
+    const cnt = say(p, '', 800, 200, t0, { size: 34, fill: DNA, weight: 700 });
+    for (let i = 0; i < n; i++) prog(() => { cnt.textContent = `нуклеотидов: ${i + 1}   связей: ${i}`; }, t0 + i * .4, 0);
+    st2.units.slice(1).forEach((u, i) => {
+      tw(u.pho.firstChild, { c_fill: DNA }, m('pairs', i * .15), .3);
+      say(p, String(i + 1), st2.xAt(i + 1) - 60, 480, m('pairs', i * .15), { size: 26, fill: DNA, weight: 700 });
+    });
+    say(p, 'к первому нуклеотиду + 9, отщеплено 9 PPᵢ', 800, 600, m('ppi'), { size: 30, weight: 600 });
+    pill(p, 'n нуклеотидов → n − 1 связь', DNA, 800, 730, m('rule'), 36);
+  }],
+  ['q4', 'Быстрая проверка', () => {
+    const p = panel(0);
+    say(p, 'цепь из 25 нуклеотидов', 800, 130, .2, { size: 30, weight: 600 });
+    strand(G(p, { x: 200, y: 330, s: .5 }), 'ATGCGTACCTAGGATCCGTAAGCTT', 0, 0, .3, { dx: 100, step: .03 });
+  }, { ask: done => quiz({ x: 200, y: 500, w: 1200, cls: 'side', maxH: 380 }, [{
+    id: 'c-bonds', prompt: ['Цепь из 25 нуклеотидов.'], build: blanks(Q_BONDS),
+  }], done) }],
+  ['direction', 'Направление цепи', (m) => {
+    const p = panel(0), dx = 170, y = 300;
+    const top = strand(p, 'ATG', 560, y, .2, { dx });
+    const l5 = say(p, 'свободный 5′-фосфат', 470, y + 70, m('p5'), { size: 24, fill: DNA, weight: 600 });
+    pulse(top.units[0].pho, m('p5'), 2);
+    pulse(top.end5, m('p5', .5), 1.4);
+    const oh = say(p, 'OH', 930, y + 40, m('p3'), { size: 26, weight: 700, anchor: 'start' });
+    const l3 = say(p, '3′-OH: здесь можно присоединить', 960, y + 90, m('p3', .4), { size: 24, fill: DNA, weight: 600 });
+    pulse(top.end3, m('p3', .5), 1.4);
+    // a nucleotide joins at 3'
+    const inc = strand(p, 'C', 1400, y, null, { dx, ends: false });
+    show(inc.units[0], m('p3', 1.8));
+    hide(oh, m('only', .4), .3); hide(l3, m('only', 2.2), .3);
+    tw(inc.units[0], { x: 560 + 3 * dx }, m('only', .4), 1.1, io);
+    tw(top.end3, { x: 560 + 3 * dx + 40 }, m('only', .4), 1.1, io);
+    yesNo(p, true, 1180, y - 130, m('only', 1.6), 1.3);
+    // not at 5'
+    const bad = strand(p, 'T', 160, y, null, { dx, ends: false });
+    show(bad.units[0], m('no5', -.2));
+    tw(bad.units[0], { x: 260 }, m('no5', .2), .6);
+    hide(l5, m('no5'), .3);
+    yesNo(p, false, 300, y - 130, m('no5', .8), 1.3);
+    tw(bad.units[0], { x: 160, o: 0 }, m('no5', 2.2), .6);
+    arrowTo(p, 430, y + 80, 1180, y + 80, DNA, m('dir'));
+    say(p, 'рост 5′ → 3′', 805, y + 130, m('dir', .4), { size: 30, fill: DNA, weight: 700 });
+    say(p, '5′-ATGC-3′', 1300, y + 12, m('write'), { size: 34, weight: 700, anchor: 'start' });
+    // same letters, other ends
+    const low = strand(p, 'CGTA', 560 + 3 * dx, 640, m('two'), { dx, rev: true });
+    say(p, '5′-CGTA-3′', 1300, 652, m('two', .4), { size: 34, weight: 700, anchor: 'start' });
+    say(p, 'буквы те же — молекулы разные', 805, 760, m('two', 1.5), { size: 28, fill: COL.dim, weight: 600 });
+    ring(p, 560, y - 70, 36, COL.chalk, m('first'));
+    ring(p, 560 + 3 * dx, 640 - 70, 36, COL.chalk, m('first', 1.4));
+    say(p, 'на 5′-конце: A', 560, y - 130, m('first', .3), { size: 24, weight: 600 });
+    say(p, 'на 5′-конце: C', 560 + 3 * dx, 640 - 130, m('first', 1.7), { size: 24, weight: 600 });
+    pill(p, 'почему только 5′ → 3′ — глава 7', DNA, 805, 840, m('ch'), 26);
+    void low;
+  }],
+  ['backbone', 'Остов и основания', (m) => {
+    const p = panel(0), y = 330;
+    const a = strand(p, 'ATGCCGTA', 300, y, .2, { dx: 140, step: .05 });
+    const b = strand(p, 'GGATCTAC', 300, y, null, { dx: 140, ends: false });
+    const band = mk('rect', { x: 220, y: y - 34, width: 1160, height: 68, rx: 34, fill: 'none', stroke: COL.dim, 'stroke-width': 3, 'stroke-dasharray': '10 8' }, p);
+    put(band, { o: 0 }); show(band, .6);
+    say(p, 'сахаро-фосфатный остов', 780, y + 80, .8, { size: 28, fill: COL.dim, weight: 600 });
+    a.units.forEach((u, i) => { hide(u.bead, m('same', .3 + i * .08), .3); show(b.units[i], m('same', .3 + i * .08), .3); });
+    say(p, 'другая последовательность — тот же остов', 780, y + 120, m('same', 1.2), { size: 26, fill: COL.dim });
+    draw(path(p, `M280 ${y - 130}V${y - 140}H1300V${y - 130}`, { stroke: COL.chalk, 'stroke-width': 3 }, { d: 0 }), m('side'), .6);
+    say(p, 'информация — только в порядке оснований', 790, y - 160, m('side', .4), { size: 28, weight: 600 });
+    a.units.forEach((u, i) => {
+      const g = G(p, { x: a.xAt(i) - 70, y: y - 22, o: 0 });
+      T(g, '−', { size: 34, weight: 700, anchor: 'middle' });
+      show(g, m('charge', i * .08));
+    });
+    say(p, 'фосфаты: заряд «−», дружат с водой', 300, 520, m('charge', .6), { size: 26, anchor: 'start' });
+    say(p, 'основания: плоские, плохо растворимы', 300, 565, m('flat'), { size: 26, anchor: 'start' });
+    // duplex sketch: backbones outside, bases inside (chapter 3)
+    strand(p, 'ATGCA', 560, 640, m('helix'), { dx: 110, up: false, ends: false });
+    strand(p, 'TGCAT', 560 + 4 * 110, 830, m('helix', .3), { dx: 110, rev: true, ends: false });
+    say(p, 'остов снаружи', 1110, 648, m('helix', .8), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    say(p, 'основания внутри', 1110, 740, m('helix', 1.2), { size: 26, weight: 600, anchor: 'start' });
+    say(p, 'остов снаружи', 1110, 838, m('helix', .8), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    pill(p, 'глава 3', DNA, 360, 740, m('helix', 2), 26);
+  }],
+  ['hydrolysis', 'Щелочной гидролиз РНК', (m) => {
+    const p = panel(0), sx = 640, sy = 180;
+    const g = pair2(p, sx, sy, { bs: 'GA' });
+    put(g, { o: 0 }); show(g, .2);
+    say(p, 'фрагмент РНК', sx - 300, sy - 60, .3, { size: 26, fill: COL.dim, weight: 600 });
+    ring(g, 44, 132, 40, RNA, m('oh2'));
+    pulse(g.p, m('p3', .5), 1.3);
+    const X = 1060, step = (i, str, t0, c = COL.chalk) => say(p, str, X, 260 + i * 120, t0, { size: 27, fill: c, weight: 600, anchor: 'start' });
+    // 1. OH- takes the proton of 2'-OH
+    const ion = say(g, 'OH⁻', 260, 160, m('base', -.6), { size: 30, fill: COL.whole, weight: 700 });
+    tw(ion, { x: 120 }, m('base'), .7);
+    const w = say(g, 'H₂O', 140, 150, 99, { size: 28, fill: COL.whole, weight: 700 });
+    hide(ion, m('base', .9), .2); show(w, m('base', .9), .2); tw(w, { x: 240, y: 60, o: 0 }, m('base', 1.4), 1.2);
+    const om = say(g, 'O⁻', 44, 140, 99, { size: 28, fill: RNA, weight: 700 });
+    swap(g.a.oh2, om, m('base', .9));
+    step(0, '1. OH⁻ снимает протон с 2′-OH', m('base', .2));
+    step(1, '2. 2′-O⁻ — нуклеофил, атакует фосфор', m('nuc'));
+    curveArrow(g, 30, 156, -10, 250, -66, 216, RNA, m('att'), .7);
+    // 3. cyclic phosphate, the chain is cut
+    const cyc = mk('path', { d: 'M44 60L44 130L-90 205L-44 128L-44 60Z', fill: RNA, 'fill-opacity': .22, stroke: 'none' }, g);
+    put(cyc, { o: 0 }); show(cyc, m('ring', .4));
+    const l2 = path(g, 'M30 140L-66 198', { stroke: RNA, 'stroke-width': 5 }, { d: 0 });
+    draw(l2, m('ring'), .5);
+    step(2, '3. 2′,3′-циклический фосфат', m('ring', .3), RNA);
+    hide(g.l5, m('cut'), .3);
+    tw(g.lower, { y: 70 }, m('cut', .2), .8);
+    strike(p, sx - 140, sy + 230, sx - 70, sy + 270, m('cut', .5));
+    say(p, 'цепь разрезана', sx - 160, sy + 300, m('cut', .9), { size: 26, fill: NO, weight: 700, anchor: 'end' });
+    // 4. the ring opens
+    hide(l2, m('open'), .4); hide(cyc, m('open'), .4);
+    step(3, '4. кольцо раскрывается:', m('open', .3));
+    say(p, 'монофосфат при 2′ или 3′', X + 32, 660 + 40, m('open', 1), { size: 25, fill: COL.dim, anchor: 'start' });
+    pill(p, 'щелочной гидролиз РНК', RNA, 1290, 820, m('name'), 30);
+  }],
+  ['stable', 'Почему в ДНК дезоксирибоза', (m) => {
+    const p = panel(0);
+    say(p, 'РНК: 2′-OH в каждом звене', 420, 110, .2, { size: 30, fill: RNA, weight: 700 });
+    const r = strand(G(p, { x: 110, y: 300, s: .55 }), 'AUGCUAGCAU', 0, 0, .3, { dx: 100, step: .04 });
+    const marks = r.units.slice(1).map((u, i) => { const e = mk('path', { d: `M${110 + (i + .5) * 55} 248V262`, stroke: NO, 'stroke-width': 4 }, p); put(e, { o: 0 }); show(e, m('count', .3 + i * .06), .2); return e; });
+    say(p, '1000 нуклеотидов → 999 мест разреза', 420, 400, m('count', .5), { size: 26, weight: 600 });
+    // minutes: pieces; hours: single nucleotides
+    r.units.forEach((u, i) => {
+      const chunk = Math.floor(i / 3.4);
+      if (i === 3 || i === 6) hide(u.link, m('min'), .2);
+      tw(u, { x: i * 100 + chunk * 60 }, m('min', .2), .7);
+      if (u.link) hide(u.link, m('hours'), .2);
+      tw(u, { x: i * 124 }, m('hours', .3), .8);
+    });
+    marks.forEach(e => hide(e, m('min'), .3));
+    say(p, 'минуты: куски', 250, 450, m('min', .5), { size: 26, fill: RNA, anchor: 'start' });
+    say(p, 'часы: отдельные нуклеотиды', 250, 490, m('hours', .6), { size: 26, fill: RNA, anchor: 'start' });
+    // DNA: H at 2', nothing to attack with
+    say(p, 'ДНК: 2′-H', 1180, 110, m('dna', -.4), { size: 30, fill: DNA, weight: 700 });
+    const d = pair2(p, 1120, 210, { s: .6, deoxy: true, bs: 'GC' });
+    put(d, { o: 0 }); show(d, m('dna', -.3));
+    ring(d, 44, 132, 36, DNA, m('dna', .5));
+    const ion = say(p, 'OH⁻', 1400, 300, m('none', -.3), { size: 28, fill: COL.whole, weight: 700 });
+    tw(ion, { x: -60 }, m('none', .1), .6);
+    yesNo(p, false, 1260, 300, m('none', .8), 1.2);
+    say(p, 'нуклеофила нет — цепь цела', 1250, 590, m('none', 1.4), { size: 26, fill: DNA, weight: 600 });
+    // how long DNA lasts
+    const box = mk('rect', { x: 80, y: 560, width: 820, height: 290, rx: 18, fill: CARD, stroke: DNA, 'stroke-width': 2.5 }, p);
+    put(box, { o: 0 }); show(box, m('old'));
+    say(p, 'ДНК сохраняется долго', 110, 612, m('old'), { size: 30, fill: DNA, weight: 700, anchor: 'start' });
+    say(p, 'останки — сотни тысяч лет', 110, 666, m('old', .6), { size: 26, anchor: 'start' });
+    say(p, 'зубы мамонтов в вечной мерзлоте — больше 1 млн лет', 110, 716, m('mammoth'), { size: 26, anchor: 'start' });
+    say(p, 'и она разрушается — только намного медленнее РНК', 110, 776, m('slow'), { size: 24, fill: COL.dim, anchor: 'start' });
+    say(p, 'наследственности нужна стабильность', 110, 822, m('keep'), { size: 24, fill: DNA, weight: 600, anchor: 'start' });
+    const box2 = mk('rect', { x: 960, y: 620, width: 560, height: 170, rx: 18, fill: CARD, stroke: RNA, 'stroke-width': 2.5 }, p);
+    put(box2, { o: 0 }); show(box2, m('msg'));
+    say(p, 'РНК — временная', 990, 672, m('msg'), { size: 30, fill: RNA, weight: 700, anchor: 'start' });
+    say(p, 'сообщение: прочитали и разобрали', 990, 726, m('msg', .8), { size: 26, anchor: 'start' });
+  }],
+  ['forms', 'Форма спирали', (m) => {
+    const p = panel(0), base = 820, k = 20;   // 20 px per ångström
+    const stack = (x, w, rise, c, t0) => {
+      for (let i = 0; i < 11; i++) {
+        const yy = base - i * rise * k, e = G(p, { o: 0 });
+        path(e, `M${x - w / 2} ${yy}H${x + w / 2}`, { stroke: c, 'stroke-width': 6 });
+        mk('circle', { cx: x - w / 2, cy: yy, r: 7, fill: COL.dim }, e); mk('circle', { cx: x + w / 2, cy: yy, r: 7, fill: COL.dim }, e);
+        show(e, t0 + i * .08, .3);
+      }
+    };
+    say(p, 'по 11 пар; высота в масштабе', 800, 60, .2, { size: 24, fill: COL.dim });
+    // scale bar 10 Å
+    draw(path(p, `M150 ${base}V${base - 200}`, { stroke: COL.chalk, 'stroke-width': 4 }, { d: 0 }), .3, .4);
+    say(p, '10 Å', 170, base - 90, .4, { size: 24, anchor: 'start' });
+    const ax = 560, bx = 1140;
+    say(p, 'РНК: A-форма', ax, base - 10 * 2.6 * k - 60, m('rna', .6), { size: 32, fill: RNA, weight: 700 });
+    stack(ax, 300, 2.6, RNA, m('rna', .8));
+    say(p, '≈ 11 пар на виток', ax, base - 10 * 2.6 * k - 22, m('a'), { size: 24, fill: RNA });
+    const br = (x, rise, c, t0, str) => {
+      const y1 = base, y2 = base - rise * k;
+      draw(path(p, `M${x} ${y1}H${x + 14}V${y2}H${x}`, { stroke: c, 'stroke-width': 3 }, { d: 0 }), t0, .4);
+      say(p, str, x + 26, (y1 + y2) / 2 + 9, t0 + .3, { size: 26, fill: c, weight: 700, anchor: 'start' });
+    };
+    say(p, 'шире и короче', ax, base + 50, m('a', 1.5), { size: 26, fill: RNA, weight: 600 });
+    br(ax + 170, 2.6, RNA, m('b', 1.5), '≈ 2,6 Å');
+    say(p, 'ДНК: B-форма', bx, base - 10 * 3.4 * k - 40, m('b'), { size: 32, fill: DNA, weight: 700 });
+    stack(bx, 240, 3.4, DNA, m('b', .2));
+    br(bx + 140, 3.4, DNA, m('b', 2.6), '3,4 Å');
+    say(p, 'в клетке — в основном B; может переходить в A и Z', 1140, base + 50, m('dna', 1.5), { size: 24, fill: DNA, weight: 600 });
+    pill(p, 'главы 3 и 4', DNA, 1440, 300, m('dna', 5), 26);
+  }],
+  ['wrap', 'Итоги', (m) => {
+    const p = panel(0);
+    numbered(p, [['основание → нуклеозид (+ сахар) → нуклеотид (+ фосфат) → цепь', 'w1'], ['пурины A, G — 2 кольца; пиримидины C, T, U — 1; T в ДНК, U в РНК', 'w2'],
+      ['фосфодиэфирная связь 3′–O–P–O–5′; цепь растёт 5′ → 3′', 'w3'], ['2′-OH рибозы: РНК рвётся в щёлочи; ДНК с 2′-H устойчива', 'w4']], m, 230, 130, 30);
+  }],
+  ['final1', 'Практика главы', () => { panel(0); }, { ask: done => quiz(SCREEN, [{
+    id: 'p-stage', prompt: ['Какая это ступень?'],
+    build: grid(P_STAGE, [['b', 'Основание'], ['s', 'Нуклеозид'], ['t', 'Нуклеотид'], ['c', 'Цепь', DNA]], { multi: false, text: true }),
+  }], done, 'Практика главы   1 из 3') }],
+  ['final2', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-tf', prompt: ['Верно или неверно?'], build: grid(P_TF, TF, { multi: false, text: true }),
+  }], done, 'Практика главы   2 из 3') }],
+  ['final3', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-num', prompt: ['Впишите число.'], build: blanks(P_NUM),
+  }], done, 'Практика главы   3 из 3') }],
+  ['finish', 'Готово', () => {}, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+/* ---------- question data ---------- */
+const Q_RINGS = [
+  { parts: ['Аденин'], ans: ['pu'], why: 'Аденин — пурин: два кольца.' },
+  { parts: ['Цитозин'], ans: ['py'], why: 'Цитозин — пиримидин: одно кольцо.' },
+  { parts: ['Гуанин'], ans: ['pu'], why: 'Гуанин — пурин: два кольца.' },
+  { parts: ['Урацил'], ans: ['py'], why: 'Урацил — пиримидин.' },
+  { parts: ['Тимин'], ans: ['py'], why: 'Тимин — пиримидин: урацил с метильной группой.' },
+];
+const Q_BONDS = [
+  { parts: ['Фосфодиэфирных связей в ней: ', { box: '24' }], why: '25 − 1 = 24: связь — между соседями.', hint: 'Связь — между соседними нуклеотидами: на одну меньше, чем нуклеотидов.' },
+  { parts: ['Пирофосфатов отщеплено при её синтезе: ', { box: '24' }], why: 'На каждую новую связь — один пирофосфат: 24.', hint: 'К первому нуклеотиду присоединяют остальные, и каждый отдаёт один пирофосфат.' },
+];
+const P_STAGE = [
+  { parts: ['Аденин'], ans: ['b'], why: 'Основание: пурин, два кольца.' },
+  { parts: ['Дезоксиаденозин'], ans: ['s'], why: 'Нуклеозид: аденин + дезоксирибоза.' },
+  { parts: ['Дезоксиаденозинмонофосфат'], ans: ['t'], why: 'Нуклеотид: нуклеозид + один фосфат.' },
+  { parts: ['Цепь ДНК'], ans: ['c'], why: 'Полинуклеотид: нуклеотиды, соединённые фосфодиэфирными связями.' },
+  { parts: ['Уридин'], ans: ['s'], why: 'Нуклеозид: урацил + рибоза.' },
+  { parts: ['dATP'], ans: ['t'], why: 'Нуклеотид с тремя фосфатами — дезоксинуклеозидтрифосфат.' },
+  { parts: ['Тимидин'], ans: ['s'], why: 'Нуклеозид: тимин + дезоксирибоза (дезокситимидин).' },
+];
+const P_TF = [
+  { parts: ['У цитозина два кольца.'], ans: ['f'], why: 'Одно: цитозин — пиримидин.' },
+  { parts: ['Урацил есть в РНК, а в ДНК его обычно нет.'], ans: ['t'], why: 'В ДНК вместо урацила тимин.' },
+  { parts: ['Основание присоединено к 5′-углероду сахара.'], ans: ['f'], why: 'К 1′; к 5′ — фосфат.' },
+  { parts: ['При присоединении dNTP к цепи уходят β- и γ-фосфаты.'], ans: ['t'], why: 'Вместе это пирофосфат; α остаётся в цепи.' },
+  { parts: ['Новый нуклеотид присоединяется к 5′-концу цепи.'], ans: ['f'], why: 'К 3′-концу, к свободной группе 3′-OH.' },
+  { parts: ['5′-ATGC-3′ и 5′-CGTA-3′ — одна и та же молекула.'], ans: ['f'], why: 'Разные: на 5′-конце у первой аденин, у второй цитозин.' },
+  { parts: ['Щёлочь разрезает РНК, потому что у рибозы есть 2′-OH.'], ans: ['t'], why: '2′-O⁻ атакует соседний фосфат; у дезоксирибозы при 2′ атом H.' },
+  { parts: ['Гуанин в редкой енольной форме спаривается с тимином.'], ans: ['t'], why: 'Это одна из причин спонтанных мутаций G–C → A–T.' },
+];
+const P_NUM = [
+  { parts: ['Фосфодиэфирных связей в цепи из 40 нуклеотидов: ', { box: '39' }], why: '40 − 1 = 39.', hint: 'n нуклеотидов — n − 1 связь.' },
+  { parts: ['Пирофосфатов отщепляется при синтезе цепи из 10 нуклеотидов: ', { box: '9' }], why: 'По одному на каждую из 9 связей.', hint: 'Один пирофосфат на каждую новую связь.' },
+  { parts: ['Мест, где щёлочь может разрезать РНК из 1000 нуклеотидов: ', { box: '999' }], why: 'По одному у каждой фосфодиэфирной связи: 999.', hint: 'Разрез идёт у каждой фосфодиэфирной связи.' },
+  { parts: ['Фосфатов в одной молекуле dNTP: ', { box: '3' }], why: 'α, β и γ.', hint: 'Трифосфат.' },
+  { parts: ['Колец у гуанина: ', { box: '2' }, ', у урацила: ', { box: '1' }], why: 'Гуанин — пурин, урацил — пиримидин.', hint: 'Пурины — два кольца, пиримидины — одно.' },
+];
+boot();
+</script>
+</body>
+</html>
