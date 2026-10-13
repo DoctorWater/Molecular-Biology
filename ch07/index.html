@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Репликативная вилка — ДНК и её копирование</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d2b27'/%3E%3Cpath d='M12 24H52M12 34H52' stroke='%23ece8dc' stroke-width='6'/%3E%3Cpath d='M12 44H52' stroke='%23f0b45a' stroke-width='6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<script src="../lib/engine.js"></script>
+<script src="../lib/bio.js"></script>
+<script src="audio/ru/timings.js"></script>
+<script>
+'use strict';
+const CHAPTER = { number: 7, title: 'Репликативная вилка', minutes: 13, language: 'ru' };
+
+/* ---------- chapter drawing helpers (shared ones: lib/bio.js) ---------- */
+const rad = a => a * Math.PI / 180;
+// A point on a circle: angles in degrees, clockwise from the top.
+const ringPt = (cx, cy, r, a) => [cx + r * Math.sin(rad(a)), cy - r * Math.cos(rad(a))];
+// Polyline along a ring from angle a0 to a1; the radius may depend on the angle (rf).
+function arcD(cx, cy, a0, a1, rf) {
+  const k = Math.max(2, Math.ceil(Math.abs(a1 - a0) / 3));
+  let d = '';
+  for (let i = 0; i <= k; i++) {
+    const a = a0 + (a1 - a0) * i / k, [x, y] = ringPt(cx, cy, rf(a), a);
+    d += `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
+  }
+  return d;
+}
+// Piecewise-linear value of t over [[t, v], …].
+function pw(t, pts) {
+  if (t <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) if (t <= pts[i][0]) return pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * (t - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0] || 1);
+  return pts[pts.length - 1][1];
+}
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const strike = (p, x1, x2, y, t0) => draw(path(p, `M${x1} ${y}H${x2}`, { stroke: NO, 'stroke-width': 5 }, { d: 0 }), t0, .4);
+const NB = ' ';
+const RC = [520, 490], RR = 200;   // centre and radius of the ring scenes
+// A subscripted label: ori + sub.
+function oriText(p, sub, x, y, t0, { fill = COL.int, size = 28, anchor = 'middle' } = {}) {
+  const e = T(p, 'ori', { x, y, size, fill, weight: 700, anchor, o: 0 });
+  const s = mk('tspan', { 'font-size': size * .72, dy: size * .22 }, e);
+  s.textContent = sub;
+  show(e, t0);
+  return e;
+}
+// A big number that counts up with a unit label.
+function counterAt(p, x, y, t0, unit, { size = 110, fill = DNA } = {}) {
+  const e = T(p, '0', { x, y, size, fill, weight: 700, anchor: 'end', o: 0 });
+  show(e, t0);
+  say(p, unit, x + 24, y, t0, { size: 30, fill: COL.dim, anchor: 'start', weight: 600 });
+  return e;
+}
+// A circular chromosome with a replication bubble. phi (degrees, from the origin at the top) is how far each fork has gone;
+// two: both ways (θ) or one (the eye of a single fork). .set(phi) redraws. Parental strands chalk, new strands amber,
+// forks yellow dots.
+function bubble(p, cx, cy, R, t0, { two = true, sep = 22, gap = 5 } = {}) {
+  const g = G(p, { o: t0 == null ? 1 : 0 }), L = G(g), F = G(g);
+  const seg = (a0, a1, rf, c) => path(L, arcD(cx, cy, a0, a1, rf), { stroke: c, 'stroke-width': 7, 'stroke-linejoin': 'round' });
+  g.set = phi => {
+    L.replaceChildren(); F.replaceChildren();
+    const ramp = Math.max(1, Math.min(22, phi / 2)), env = a => clamp01(Math.min(a / ramp, (phi - a) / ramp));
+    const u1 = two ? 360 - phi : 360;
+    if (u1 - phi > 1) [-gap, gap].forEach(s => seg(phi, u1, () => R + s, COL.chalk));
+    if (phi >= 1) [1, -1].slice(0, two ? 2 : 1).forEach(sd => {
+      const rf = k => a => R + k * sep * env(Math.abs(a));
+      seg(0, sd * phi, a => rf(1)(a) + gap, COL.chalk); seg(0, sd * phi, a => rf(1)(a) - gap, DNA);
+      seg(0, sd * phi, a => rf(-1)(a) + gap, DNA); seg(0, sd * phi, a => rf(-1)(a) - gap, COL.chalk);
+      const [x, y] = ringPt(cx, cy, R, sd * phi);
+      mk('circle', { cx: x, cy: y, r: 11, fill: COL.int, stroke: COL.board, 'stroke-width': 3 }, F);
+    });
+  };
+  g.set(0);
+  if (t0 != null) show(g, t0);
+  return g;
+}
+// The origin mark above a ring.
+function oriMark(p, cx, cy, R, t0, str) {
+  const [x, y] = ringPt(cx, cy, R, 0);
+  const d = G(p, { o: 0 });
+  mk('circle', { cx: x, cy: y, r: 9, fill: COL.int }, d);
+  T(d, str, { x, y: y - 36, size: 28, fill: COL.int, weight: 700, anchor: 'middle' });
+  show(d, t0);
+  return d;
+}
+function dblRing(p, x, y, r, t0) {
+  const g = G(p, { x, y, o: 0 });
+  mk('circle', { r: r + 5, fill: 'none', stroke: COL.chalk, 'stroke-width': 6 }, g);
+  mk('circle', { r: r - 5, fill: 'none', stroke: DNA, 'stroke-width': 6 }, g);
+  show(g, t0);
+  return g;
+}
+function scissors(p, x, y, t0, c = PROT) {
+  const g = G(p, { x, y, o: 0 });
+  path(g, 'M-18 -10L30 14M-18 10L30 -14', { stroke: c, 'stroke-width': 5 });
+  [-1, 1].forEach(s => mk('circle', { cx: -28, cy: 15 * s, r: 10, fill: 'none', stroke: c, 'stroke-width': 4 }, g));
+  if (t0 != null) show(g, t0);
+  return g;
+}
+// A text label that stays at one place and is replaced by the next (captions of a step list).
+function caption(p, str, x, y, t0, t1, opt = {}) {
+  const e = say(p, str, x, y, t0, { size: 30, weight: 600, ...opt });
+  if (t1 != null) hide(e, t1, .4);
+  return e;
+}
+// Nucleotide pieces for the energy and proofreading scenes.
+const PENT = [0, 1, 2, 3, 4].map(k => `${(30 * Math.sin(k * 1.2566)).toFixed(1)} ${(-30 * Math.cos(k * 1.2566)).toFixed(1)}`).join('L');
+function sugarAt(p, x, y, c = COL.dim) {
+  const g = G(p, { x, y });
+  mk('path', { d: `M${PENT}Z`, fill: CARD, stroke: c, 'stroke-width': 4 }, g);
+  return g;
+}
+function pDot(p, x, y, c = COL.dim, lab = 'P', r = 22) {
+  const g = G(p, { x, y });
+  mk('circle', { r, fill: CARD, stroke: c, 'stroke-width': 4 }, g);
+  if (lab) T(g, lab, { y: r * .4, size: r * 1.1, fill: c, weight: 700, anchor: 'middle' });
+  return g;
+}
+function beadAt(p, x, y, b, r = 28) {
+  const g = G(p, { x, y });
+  mk('circle', { r, fill: BASE[b] }, g);
+  T(g, b, { y: r * .4, size: r * 1.05, fill: COL.board, weight: 700, anchor: 'middle' });
+  return g;
+}
+const seg1 = (p, x1, y1, x2, y2, c = COL.dim, w = 4) => path(p, `M${x1} ${y1}L${x2} ${y2}`, { stroke: c, 'stroke-width': w });
+// A short phrase with subscripted chain ends on the stage: 5′ / 3′ labels.
+const endLab = (p, str, x, y, t0, fill = COL.chalk) => say(p, str, x, y, t0, { size: 30, weight: 700, fill });
+
+// The fork scene shared by several beats: parental strands to x = 110, the helix ahead to 1500 (hel: none).
+const FK = { xEnd: 1500, A: 40, P: 100, n: 6, back: 330, spread: 130, hel: null, tail: 110 };
+const FR_R = [330, 520, 710, 900];          // 5′ ends of the Okazaki fragments (the primers sit there)
+const PRIM = 36;                            // primer length on the stage, px
+// Lagging fragments 0..k complete (k ≥ 0), as the state of fork.
+const fragsTo = k => FR_R.slice(0, k + 1).map((r, j) => [r, j ? FR_R[j - 1] : 150, PRIM]);
+const fragRail = (fk, x, fx) => fk.rail(1, x, fx) + 17;
+
+/* ---------- beats: [id, title, run(m, D), { ask }?] ---------- */
+const BEATS = [
+  ['intro', 'Репликативная вилка', (m, D) => {
+    const g = G(scene, { o: 0, y: 24 });
+    T(g, 'Раздел 2 «Репликация ДНК у прокариот» · Глава 7', { x: 800, y: 330, size: 28, fill: COL.dim, anchor: 'middle' });
+    T(g, 'Репликативная вилка', { x: 800, y: 440, size: 70, weight: 600, anchor: 'middle' });
+    tw(g, { o: 1, y: 0 }, .2, 1.1, out);
+    const r = say(scene, 'как строятся новые цепи', 800, 540, m('sub'), { size: 36, fill: COL.dim });
+    tw(g, { o: 0, y: -24 }, D - .9, .8); hide(r, D - .9, .8);
+  }],
+  ['slow', 'Одна вилка: 76 минут', (m) => {
+    const p = panel(0), [cx, cy] = RC, b = bubble(p, cx, cy, RR, .3, { two: false });
+    oriMark(p, cx, cy, RR, .5, 'ориджин');
+    say(p, 'кольцо: 4600000 пар нуклеотидов'.replace('4600000', `4${NB}600${NB}000`), 1260, 250, .6, { size: 28 });
+    say(p, 'полимераза: около 1000 нт/с', 1260, 320, m('pol'), { size: 28, fill: PROT, weight: 600 });
+    colorLine(p, [[`4${NB}600${NB}000 / 1000 = `], ['4600 с', DNA]], 1260, 410, m('calc'), { size: 34 });
+    const num = counterAt(p, 1170, 560, m('calc'), 'минут');
+    const t0 = m('calc', 2.2);
+    prog(q => { b.set(360 * q); num.textContent = Math.floor(76.7 * q); }, t0, 8, lin);
+    strike(p, 920, 1370, 540, m('real'));
+    pill(p, 'на деле около 40 минут', OK, 1260, 680, m('real'), 32);
+  }],
+  ['fast', 'Две вилки: 38 минут', (m) => {
+    const p = panel(0), [cx, cy] = RC, b = bubble(p, cx, cy, RR, .3);
+    oriMark(p, cx, cy, RR, .5, 'ориджин');
+    pill(p, 'двунаправленная репликация', DNA, 1260, 240, m('bi'), 30);
+    say(p, 'на вилку:', 1260, 320, m('half'), { size: 26, fill: COL.dim, weight: 600 });
+    colorLine(p, [[`4${NB}600${NB}000 / 2 = `], [`2${NB}300${NB}000 пар`, DNA]], 1260, 364, m('half', .4), { size: 32 });
+    colorLine(p, [[`2${NB}300${NB}000 / 1000 = `], ['2300 с', DNA]], 1260, 430, m('calc'), { size: 32 });
+    const num = counterAt(p, 1170, 600, m('ori', 2), 'минут');
+    const t0 = m('ori', 2);
+    prog(q => { b.set(180 * q); num.textContent = Math.floor(38.4 * q); }, t0, m('meet', 1.8) - t0, lin);
+    const [x, y] = ringPt(cx, cy, RR, 180);
+    const ter = G(p, { o: 0 });
+    mk('circle', { cx: x, cy: y + 4, r: 9, fill: COL.bad }, ter);
+    T(ter, 'ter', { x, y: y + 50, size: 28, fill: COL.bad, weight: 700, anchor: 'middle' });
+    show(ter, m('meet'));
+    pill(p, 'вилки встретились', OK, 1260, 700, m('meet', 1.5), 30);
+  }],
+  ['fork', 'Что такое вилка', (m) => {
+    const p = panel(0);
+    const fk = fork(p, 700, 450, .3, { ...FK, lead: 690, fr: [[880, 880, 0]] });
+    const lab = (s, x, y, t, fill = COL.chalk, anchor = 'middle') => say(p, s, x, y, t, { size: 28, fill, weight: 600, anchor });
+    lab('двойная спираль ещё цела', 1230, 360, m('y'));
+    arrowTo(p, 1230, 372, 1230, 405, COL.dim, m('y', .5));
+    lab('ручка Y', 1230, 560, m('y', .8), COL.dim);
+    lab('родительские цепи', 400, 450, m('arms'));
+    lab('разошлись: рожки', 400, 486, m('arms', .3), COL.dim);
+    fk.go({ x: 900, fr: [[880, 690, 0]] }, m('new'), 2.4);
+    lab('новая цепь', 640, fk.rail(-1, 640, 900) - 17 - 34, m('new', 1.2), DNA);
+    lab('новая цепь', 640, fk.rail(1, 640, 900) + 17 + 48, m('new', 1.6), DNA);
+    arrowTo(p, 1160, 640, 935, 480, COL.int, m('name'));
+    pill(p, 'репликативная вилка', COL.int, 1250, 660, m('name'), 32);
+  }],
+  ['theta', 'θ-структура', (m) => {
+    const p = panel(0), [cx, cy] = RC, b = bubble(p, cx, cy, RR, .3);
+    oriMark(p, cx, cy, RR, m('bubble'), 'oriC');
+    pill(p, 'θ-структура', DNA, 1260, 230, m('theta'), 34);
+    say(p, 'хромосома E. coli · плазмиды', 1260, 300, m('theta', 1.5), { size: 26, fill: COL.dim, weight: 600 });
+    prog(q => b.set(180 * q), m('bubble', 1.5), 9, lin);
+    say(p, 'между вилками растёт пузырь:', 1260, 390, m('bubble', 2.5), { size: 26 });
+    say(p, 'два дочерних дуплекса', 1260, 426, m('bubble', 3), { size: 26 });
+    const [x, y] = ringPt(cx, cy, RR, 180), ter = G(p, { o: 0 });
+    mk('circle', { cx: x, cy: y + 4, r: 9, fill: COL.bad }, ter);
+    T(ter, 'ter + Tus', { x, y: y + 50, size: 28, fill: COL.bad, weight: 700, anchor: 'middle' });
+    show(ter, m('ter'));
+    say(p, 'вилку пропускает только с одной стороны', 1260, 520, m('ter', 3), { size: 24, fill: COL.dim, weight: 600 });
+    dblRing(p, 1130, 650, 52, m('two'));
+    dblRing(p, 1390, 650, 52, m('two', .3));
+    arrowTo(p, 1190, 650, 1330, 650, COL.dim, m('two', .6));
+  }],
+  ['roll', 'Катящееся кольцо', (m) => {
+    const p = panel(0), cx = 330, cy = 470, R = 140, tY = cy - R, U = 330;
+    pill(p, 'катящееся кольцо', DNA, 800, 90, .3, 32);
+    mk('circle', { cx, cy, r: R, fill: 'none', stroke: COL.chalk, 'stroke-width': 7 }, p);
+    const rot = G(p, { x: cx, y: cy });
+    [0, 90, 180, 270].forEach(a => { const [x, y] = ringPt(0, 0, R + 24, a); mk('circle', { cx: x, cy: y, r: 5, fill: COL.dim }, rot); });
+    const arcNew = path(p, '', { stroke: DNA, 'stroke-width': 7 }), tailA = path(p, '', { stroke: COL.chalk, 'stroke-width': 7 }),
+      tailB = path(p, '', { stroke: DNA, 'stroke-width': 7 }), sec = path(p, '', { stroke: DNA, 'stroke-width': 5, 'stroke-dasharray': '76 6' });
+    const lab3 = T(p, '3′', { size: 28, weight: 700, anchor: 'middle', o: 0 }), lab5 = T(p, '5′', { x: cx + 26, y: tY - 14, size: 28, weight: 700, anchor: 'middle', o: 0 });
+    const cut = scissors(p, cx, tY - 56, m('cut'));
+    hide(cut, m('end'), .4);
+    const cutLab = say(p, 'разрез', cx + 70, tY - 62, m('cut', .3), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    hide(cutLab, m('turn'), .4);
+    show(lab3, m('end')); show(lab5, m('end'));
+    const freeLab = say(p, 'свободный 3′-конец', 660, 250, m('end'), { size: 26, fill: DNA, weight: 600, anchor: 'start' });
+    const freeArr = arrowTo(p, 655, 255, cx + 14, tY - 8, DNA, m('end', .3));
+    hide(freeLab, m('turn'), .4); hide(freeArr, m('turn'), .4);
+    const tTurn = m('turn'), tSec = m('second'), tCon = m('concat'), tCut = m('cutting');
+    const alpha = t => pw(t, [[tTurn, 0], [tSec, 450], [tCon, 640], [tCut - .3, 1080]]);
+    const dur = tCut - .3 - tTurn;
+    prog(q => {
+      const t = tTurn + q * dur, a = alpha(t), len = U * a / 360, e2 = Math.min(len, clamp01((t - tSec) / 3) * U);
+      arcNew.setAttribute('d', a > 0 ? arcD(cx, cy, 0, Math.min(a, 360), () => R - 16) : '');
+      tailA.setAttribute('d', len > 0 ? `M${cx} ${tY}H${cx + Math.min(len, U)}` : '');
+      tailB.setAttribute('d', len > U ? `M${cx + U} ${tY}H${cx + len}` : '');
+      sec.setAttribute('d', e2 > 1 ? `M${cx} ${tY + 17}H${cx + e2}` : '');
+      put(rot, { r: a });
+      const [lx, ly] = ringPt(cx, cy, R - 44, Math.min(a, 360));
+      put(lab3, { x: lx, y: ly + 10 });
+      put(lab5, { x: cx + len + 30, y: tY - 14 });
+    }, tTurn, dur, lin);
+    hide(say(p, 'вытесненная цепь', 900, 300, m('turn', 3), { size: 26, fill: COL.chalk, weight: 600 }), tSec, .4);
+    hide(say(p, 'вторая цепь', 560, tY + 56, tSec + 1, { size: 26, fill: DNA, weight: 600 }), tCon, .4);
+    // concatemer: three genome copies, cut apart
+    const bars = [0, 1, 2].map(k => {
+      const b = G(p, { o: 0 });
+      mk('rect', { x: cx + k * U + 4, y: tY - 7, width: U - 8, height: 14, rx: 7, fill: k ? DNA : COL.chalk }, b);
+      T(b, `геном ${k + 1}`, { x: cx + k * U + U / 2, y: tY - 20, size: 24, fill: COL.dim, weight: 600, anchor: 'middle' });
+      return b;
+    });
+    const brace = G(p, { o: 0 });
+    path(brace, `M${cx} ${tY - 88}V${tY - 100}H${cx + 3 * U}V${tY - 88}`, { stroke: COL.int, 'stroke-width': 4 });
+    T(brace, 'конкатемер', { x: cx + 1.5 * U, y: tY - 114, size: 28, fill: COL.int, weight: 700, anchor: 'middle' });
+    show(brace, tCon + 1.5); hide(brace, tCut + 1, .4);
+    [tailA, tailB, sec, lab5].forEach(e => hide(e, tCut, .3));
+    bars.forEach((b, k) => { show(b, tCut, .3); tw(b, { y: k * 70 }, tCut + 1.3, 1.2); });
+    [1, 2].forEach(k => {
+      const ln = path(p, `M${cx + k * U} ${tY - 40}V${tY + 40}`, { stroke: NO, 'stroke-width': 4, 'stroke-dasharray': '8 6' }, { o: 0 });
+      show(ln, tCut, .3); hide(ln, tCut + 1.3, .3);
+    });
+    scissors(p, cx + U, tY + 70, tCut);
+    say(p, 'плазмиды · фаги', 1100, 760, m('who'), { size: 28, weight: 600 });
+    say(p, 'фаг λ: поздняя стадия — катящееся кольцо, ранняя — θ', 1100, 804, m('who', 1.2), { size: 24, fill: COL.dim, weight: 600 });
+  }],
+  ['dloop', 'D-петля', (m) => {
+    const p = panel(0), cx = 520, cy = 500, R = 175, aH = -35, aL = 205, B = 50;
+    pill(p, 'D-петля: митохондрии млекопитающих', DNA, 800, 90, .3, 32);
+    mk('circle', { cx, cy, r: R - 8, fill: 'none', stroke: COL.chalk, 'stroke-width': 7 }, p);
+    const outer = path(p, arcD(cx, cy, aH, aH + 360, () => R + 8), { stroke: COL.chalk, 'stroke-width': 7 }),
+      loop = path(p, '', { stroke: COL.chalk, 'stroke-width': 7, 'stroke-linejoin': 'round' }),
+      newH = path(p, '', { stroke: DNA, 'stroke-width': 7 }), newL = path(p, '', { stroke: DNA, 'stroke-width': 7, 'stroke-linejoin': 'round' });
+    say(p, 'H', cx + R + 30, cy + 6, .5, { size: 26, fill: COL.dim, weight: 700, anchor: 'start' });
+    say(p, 'L', cx + R - 52, cy + 6, .5, { size: 26, fill: COL.dim, weight: 700, anchor: 'end' });
+    // origins
+    const [hx, hy] = ringPt(cx, cy, R, aH), [lx, ly] = ringPt(cx, cy, R, aL);
+    const hMark = G(p, { o: 0 }), lMark = G(p, { o: 0 });
+    mk('circle', { cx: hx, cy: hy, r: 10, fill: COL.int }, hMark);
+    oriText(hMark, 'H', ringPt(cx, cy, R + 78, aH)[0], ringPt(cx, cy, R + 78, aH)[1], 0);
+    const lDot = mk('circle', { cx: 0, cy: 0, r: 10, fill: COL.int }, lMark);
+    put(lDot, { x: lx, y: ly });
+    oriText(lMark, 'L', ringPt(cx, cy, R + 90, aL)[0], ringPt(cx, cy, R + 90, aL)[1] + 16, 0);
+    show(hMark, m('hl')); show(lMark, m('hl', 1.2));
+    const tS = m('start'), tG = m('grow'), tO = m('ol'), tB = m('back');
+    const eAt = t => pw(t, [[tS, aH], [tS + 2.2, aH + 45], [tG, aH + 45], [tO - .4, aL + 8]]);
+    const bAt = t => pw(t, [[tB, 0], [tB + 3.5, 75]]);
+    const dist = (e, a) => { const ramp = Math.max(1, Math.min(22, (e - aH) / 2)), v = clamp01(Math.min((a - aH) / ramp, (e - a) / ramp)); return B * v * v * (3 - 2 * v); };
+    const t1 = tB + 3.6;
+    prog(q => {
+      const t = tS + q * (t1 - tS), e = eAt(t), b = bAt(t);
+      if (e > aH + 1) {
+        outer.setAttribute('d', arcD(cx, cy, e, aH + 360, () => R + 8));
+        loop.setAttribute('d', arcD(cx, cy, aH, e, a => R + 8 + dist(e, a)));
+        newH.setAttribute('d', arcD(cx, cy, aH, e, () => R - 19));
+      }
+      const a0 = aL - 6;
+      newL.setAttribute('d', b > 1 ? arcD(cx, cy, a0, a0 - b, a => R + 8 + dist(e, a) - 14) : '');
+      const [x, y] = ringPt(cx, cy, R + (e > aL - 4 ? 8 + dist(e, aL - 4) : 0), aL - 4);
+      put(lDot, { x, y });
+    }, tS, t1 - tS, lin);
+    const cap = (s, t, t2, col = COL.chalk) => caption(p, s, 1180, 330, t, t2, { fill: col, size: 30 });
+    cap('две точки начала', m('hl'), tS - .3);
+    cap('новая H-цепь строится по L', tS, m('stop'), DNA);
+    caption(p, '7S ДНК (≈ 500–700 нт)', 1180, 400, m('stop') + 1, tG - .3, { fill: DNA, size: 28 });
+    caption(p, 'вытесненная H-цепь — петля', 1180, 450, m('stop') + 2, tG - .3, { fill: COL.chalk, size: 28 });
+    cap('петля растёт по кольцу', tG, tO - .3, COL.chalk);
+    cap('≈ 2/3 кольца: открылась ori_L', tO, tB - .2, COL.int);
+    cap('новая L-цепь — в обратную сторону', tB, null, DNA);
+    legendBar(p, 1010, 640, COL.chalk, 'родительские цепи', .6);
+    legendBar(p, 1010, 690, DNA, 'новые цепи', .6);
+  }],
+  ['q1', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz(WIDE, [{
+    id: 'c-ways', prompt: ['Сопоставьте способ копирования и пример.'],
+    build: grid(Q_WAYS, WCOLS, { multi: false, text: true }),
+  }], done) }],
+  ['dir', 'Только от 5′ к 3′', (m) => {
+    const p = panel(0), seq = 'GATCCGTAGC', dx = 96, X0 = 270, Y0 = 380, gap = 240, n = seq.length;
+    const d = duplex(p, seq, X0, Y0, null, { dx, gap, t1: null, ends: false, r: 22 });
+    d.bot.units.forEach(u => show(u, .3, .4));
+    d.top.units.slice(0, 4).forEach(u => show(u, .3, .4));
+    d.bonds.slice(0, 4).forEach(b => show(b, .5, .3));
+    const yL = Y0 + 11, yB = Y0 + gap + 11;
+    endLab(p, '5′', X0 - 106, yL, .4); endLab(p, '3′', X0 - 106, yB, .4);
+    endLab(p, '5′', X0 + (n - 1) * dx + 90, yB, .4);
+    say(p, 'матрица', 130, yB + 70, .6, { size: 26, fill: COL.chalk, weight: 600, anchor: 'start' });
+    say(p, 'новая цепь', 130, yL - 50, .6, { size: 26, fill: DNA, weight: 600, anchor: 'start' });
+    const tipX = i => X0 + i * dx + 54;
+    const tip = T(p, '3′-OH', { x: tipX(3), y: yL - 52, size: 28, fill: COL.int, weight: 700, anchor: 'middle', o: 0 });
+    const pol = enzyme(p, 'ДНК-полимераза', tipX(3) + 90, 220, null, { w: 250, h: 70, size: 26 });
+    put(pol, { o: 0 });
+    show(pol, m('pol')); show(tip, m('pol', .5));
+    pulse(tip, m('pol', 1), 1.25);
+    // growth, one nucleotide at a time
+    for (let i = 4; i < n; i++) {
+      const t = m('grow', .3 + (i - 4) * .8), u = d.top.units[i];
+      put(u, { y: Y0 - 90 });
+      tw(u, { o: 1, y: Y0 }, t, .5);
+      show(d.bonds[i], t + .4, .3);
+      tw(tip, { x: tipX(i) }, t + .3, .4);
+      tw(pol, { x: tipX(i) + 90 }, t + .3, .4);
+    }
+    arrowTo(p, 330, 300, 1000, 300, COL.int, m('grow'));
+    say(p, 'растёт 5′→3′', 700, 276, m('grow', .3), { size: 30, fill: COL.int, weight: 700 });
+    const back = G(p, { o: 0 });
+    arrowTo(back, 1000, 330, 700, 330, NO, 0, true);
+    path(back, 'M820 306L880 354M880 306L820 354', { stroke: NO, 'stroke-width': 7 });
+    show(back, m('never'));
+    say(p, 'в обратную сторону — не бывает', 760, 700, m('never', .3), { size: 30, fill: NO, weight: 700 });
+  }],
+  ['anti', 'Лидирующая и отстающая цепь', (m) => {
+    const p = panel(0), fk = fork(p, 900, 450, .3, { ...FK, lead: 150, fr: [[890, 600, 0]] });
+    const yT = fk.rail(-1, 400, 900) - 17, yB = fk.rail(1, 400, 900) + 17;
+    // 5′ / 3′ labels at the four ends
+    endLab(p, '3′', 80, yT + 17 + 10, .5); endLab(p, '5′', 150, yT - 22, .5, DNA);
+    endLab(p, '5′', 80, yB - 17 + 10, .5); endLab(p, '3′', 600, yB + 40, .5, DNA); endLab(p, '5′', 890, yB + 40, .5, DNA);
+    say(p, 'родительские цепи', 330, 450, .8, { size: 26, fill: COL.chalk, weight: 600 });
+    arrowTo(p, 1100, 200, 1280, 200, COL.dim, .6);
+    say(p, 'вилка движется', 1190, 170, .6, { size: 26, fill: COL.dim, weight: 600 });
+    // leading strand
+    endLab(p, '3′', 912, fk.rail(-1, 886, 900) - 17 - 22, m('ant'), DNA);
+    const lead = G(p, { o: 0 }), lag = G(p, { o: 0 });
+    arrowTo(lead, 260, yT - 52, 700, yT - 52, DNA, 0);
+    T(lead, 'лидирующая: растёт к вилке', { x: 480, y: yT - 70, size: 28, fill: DNA, weight: 700, anchor: 'middle' });
+    T(lead, 'непрерывно', { x: 480, y: yT - 100, size: 24, fill: COL.dim, weight: 600, anchor: 'middle' });
+    show(lead, m('lead'));
+    arrowTo(lag, 880, yB + 90, 560, yB + 90, DNA, 0);
+    T(lag, 'отстающая: растёт от вилки', { x: 720, y: yB + 130, size: 28, fill: DNA, weight: 700, anchor: 'middle' });
+    show(lag, m('lagq'));
+    say(p, 'три-штрих конец смотрит от вилки', 1120, yB + 56, m('lagq', 1.2), { size: 24, fill: COL.dim, weight: 600, anchor: 'start' });
+  }],
+  ['lag', 'Фрагменты Оказаки', (m) => {
+    const p = panel(0), fk = fork(p, 350, 450, .3, { ...FK, lead: 150, fr: fragsTo(0) });
+    const yT = fk.rail(-1, 400, 900) - 17;
+    // end labels: the left ends of the template and the leading strand; the newest fragment gets its own
+    endLab(p, '3′', 80, yT + 27, .4); endLab(p, '5′', 150, yT - 22, .4, DNA);
+    endLab(p, '5′', 80, fk.rail(1, 100, 900) + 10, .4);
+    const l3 = T(p, '3′', { size: 28, weight: 700, anchor: 'middle', fill: DNA }), l5 = T(p, '5′', { size: 28, weight: 700, anchor: 'middle', fill: DNA });
+    fk.hooks.push(c => {
+      const f = c.fr[c.fr.length - 1];
+      put(l3, { x: f[1] - 16, y: fk.rail(1, f[1], c.x) + 17 + 44 });
+      put(l5, { x: f[0] + 8, y: fk.rail(1, f[0], c.x) + 17 + 44 });
+    });
+    fk.at(fk.cur);
+    arrowTo(p, 700, 190, 900, 190, COL.dim, .6);
+    say(p, 'вилка движется', 560, 198, .6, { size: 26, fill: COL.dim, weight: 600 });
+    // three cycles: the fork opens a piece, a primer appears, the fragment grows back to the previous one
+    const cyc = (k, t) => {
+      const full = fragsTo(k - 1), r = FR_R[k], prev = FR_R[k - 1];
+      fk.go({ x: r + 20, fr: [...full, [r, r, 0]] }, t, 1.2);
+      fk.go({ fr: [...full, [r, r - PRIM, PRIM]] }, t + 1.3, .7);
+      fk.go({ fr: [...full, [r, prev, PRIM]] }, t + 2.1, 1.8);
+      return t + 4.1;
+    };
+    const t1 = m('open'), tp = m('prim');
+    fk.go({ x: FR_R[1] + 20, fr: [...fragsTo(0), [FR_R[1], FR_R[1], 0]] }, t1, 1.3);
+    fk.go({ fr: [...fragsTo(0), [FR_R[1], FR_R[1] - PRIM, PRIM]] }, tp, .7);
+    fk.go({ fr: fragsTo(1) }, m('ext'), 2);
+    let t = cyc(2, m('again'));
+    cyc(3, t);
+    const pr = G(p, { o: 0 });
+    T(pr, 'праймер (РНК)', { x: FR_R[1] - 13, y: 700, size: 28, fill: RNA, weight: 700, anchor: 'middle' });
+    path(pr, `M${FR_R[1] - 13} 676V${fk.rail(1, FR_R[1], FR_R[1] + 20) + 40}`, { stroke: RNA, 'stroke-width': 3 });
+    show(pr, tp + .3); hide(pr, m('again'), .4);
+    say(p, 'фрагменты Оказаки', 1060, 700, m('okaz'), { size: 32, fill: DNA, weight: 700 });
+    say(p, 'прокариоты: 1000–2000 нт', 1060, 748, m('okaz', 2), { size: 26, weight: 600 });
+    say(p, 'эукариоты: 100–200 нт', 1060, 788, m('okaz', 3), { size: 26, weight: 600 });
+  }],
+  ['q2', 'Быстрая проверка', () => {
+    const p = panel(0), fk = fork(p, 920, 450, .2, { ...FK, lead: 150, fr: fragsTo(3) });
+    const yT = fk.rail(-1, 400, 920) - 17, yB = fk.rail(1, 400, 920) + 17;
+    S.picks = [{ el: fk, box: [130, yT - 36, 780, 72], label: 'верхняя цепь' }, { el: fk, box: [130, yB - 36, 780, 72], label: 'нижняя цепь' }];
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-lagpick', prompt: ['Какая из двух новых цепей синтезируется прерывисто? Нажмите на неё.'],
+    build: pickEls(S.picks, 1, 'Нижняя цепь отстающая: полимераза строит её кусками, от вилки.',
+      () => 'Верхняя цепь лидирующая: её 3′-конец смотрит туда, куда идёт вилка, и она растёт непрерывно.'),
+  }], done) }],
+  ['count', 'Сколько фрагментов', (m) => {
+    const p = panel(0), X0 = 140, bw = 48, rows = [330, 500];
+    const bar = (y, k, t, c) => Array.from({ length: 23 }, (_, i) => {
+      const b = G(p, { o: 0 });
+      mk('rect', { x: X0 + i * bw + 2, y: y - 22, width: bw - 4, height: 44, rx: 8, fill: DNA, 'fill-opacity': .85 }, b);
+      if (k > 1) path(b, `M${X0 + i * bw + bw / 2} ${y - 22}V${y + 22}`, { stroke: COL.board, 'stroke-width': 3 });
+      return b;
+    });
+    // brace over the first bar
+    const br = G(p, { o: 0 });
+    path(br, `M${X0} 260V248H${X0 + 23 * bw}V260`, { stroke: COL.chalk, 'stroke-width': 4 });
+    T(br, `отстающая цепь вилки: около 2${NB}300${NB}000 нт`, { x: X0 + 11.5 * bw, y: 228, size: 30, weight: 700, anchor: 'middle' });
+    show(br, m('each'));
+    const b1 = bar(rows[0], 1), b2 = bar(rows[1], 2);
+    const c1 = counterAt(p, 1430, rows[0] + 24, m('n2000'), 'фрагм.', { size: 64 }), c2 = counterAt(p, 1430, rows[1] + 24, m('n1000'), 'фрагм.', { size: 64, fill: COL.int });
+    say(p, 'фрагмент 2000 нт', X0, rows[0] - 44, m('n2000'), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    say(p, 'фрагмент 1000 нт', X0, rows[1] - 44, m('n1000'), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    say(p, 'блок = 100 000 нт = 50 фрагментов (по 2000) или 100 (по 1000)', X0, 598, m('n2000', 1), { size: 24, fill: COL.dim, weight: 600, anchor: 'start' });
+    b1.forEach((b, i) => show(b, m('n2000', .4 + i * .09), .2));
+    b2.forEach((b, i) => show(b, m('n1000', .4 + i * .09), .2));
+    prog(q => { c1.textContent = Math.round(q * 1150); }, m('n2000', .4), 2.1, lin);
+    prog(q => { c2.textContent = Math.round(q * 2300); }, m('n1000', .4), 2.1, lin);
+    colorLine(p, [['на хромосому (две вилки): '], [`от 2${NB}300 до 4${NB}600`, DNA], [' фрагментов']], 800, 700, m('all'), { size: 36 });
+    say(p, 'число приблизительное: длины разные, вилки делят кольцо не точно пополам', 800, 760, m('all', 3), { size: 24, fill: COL.dim, weight: 600 });
+  }],
+  ['q3', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz({ x: 300, y: 170, w: 1000, cls: 'side', maxH: 640 }, [{
+    id: 'c-nfrag', prompt: ['Посчитайте фрагменты Оказаки.'], build: blanks(Q_FRAG),
+  }], done) }],
+  ['energy', 'Энергия роста', (m) => {
+    const p = panel(0);
+    // the growing chain's end (left)
+    seg1(p, 150, 400, 360, 400); seg1(p, 360, 372, 360, 328);
+    pDot(p, 250, 400); sugarAt(p, 360, 400); beadAt(p, 360, 300, 'G');
+    seg1(p, 378, 424, 464, 488);
+    const o = pDot(p, 480, 500, COL.chalk, 'O', 18), h = T(p, 'H', { x: 500, y: 478, size: 22, fill: COL.chalk, weight: 600 });
+    say(p, '3′-OH', 480, 560, .4, { size: 26, fill: COL.chalk, weight: 700 });
+    say(p, 'растущая цепь', 250, 200, .4, { size: 28, fill: DNA, weight: 700 });
+    // the incoming dNTP (right)
+    const inc = G(p, { o: 0 });
+    seg1(inc, 860, 372, 860, 328); sugarAt(inc, 860, 400); beadAt(inc, 860, 300, 'C');
+    seg1(inc, 840, 424, 786, 480);
+    const al = pDot(inc, 780, 500, COL.dim, 'P');
+    T(inc, 'α', { x: 780, y: 556, size: 26, fill: COL.chalk, weight: 600, anchor: 'middle' });
+    const tl = G(inc), pb = G(inc), pg = G(inc);
+    pDot(pb, 880, 500, COL.int); pDot(pg, 980, 500, COL.int);
+    seg1(tl, 802, 500, 858, 500); seg1(tl, 902, 500, 958, 500);
+    T(tl, 'β', { x: 880, y: 556, size: 26, fill: COL.chalk, weight: 600, anchor: 'middle' });
+    T(tl, 'γ', { x: 980, y: 556, size: 26, fill: COL.chalk, weight: 600, anchor: 'middle' });
+    const en = T(tl, 'богатые энергией связи', { x: 930, y: 606, size: 24, fill: COL.int, weight: 600, anchor: 'middle', o: 0 });
+    const head = T(inc, 'дезоксинуклеозидтрифосфат (dNTP)', { x: 880, y: 210, size: 28, fill: COL.chalk, weight: 600, anchor: 'middle' });
+    show(inc, m('dntp')); show(en, m('dntp', 1.5));
+    // attack: the nucleotide comes close, the 3′-OH attacks α
+    tw(inc, { x: -220 }, m('attack') - .8, 1.2);
+    hide(head, m('attack') - .8, .4);
+    const arc = G(p, { o: 0 });
+    path(arc, 'M488 472Q522 420 556 470', { stroke: COL.int, 'stroke-width': 4 });
+    mk('path', { d: 'M556 478L542 468L560 462Z', fill: COL.int }, arc);
+    show(arc, m('attack', .8)); pulse(o, m('attack', .8), 1.3); pulse(al, m('attack', 1.1), 1.3);
+    // the bond forms
+    hide(h, m('bond'), .3);
+    draw(path(p, 'M498 500H538', { stroke: COL.chalk, 'stroke-width': 5 }, { d: 0 }), m('bond'), .4);
+    hide(arc, m('bond'), .3);
+    pill(p, 'фосфодиэфирная связь', OK, 460, 680, m('bond', .6), 26);
+    // the two outer phosphates leave as pyrophosphate
+    [tl, pb, pg].forEach(e => tw(e, { x: 120, y: 120 }, m('ppi'), 1.4));
+    hide(en, m('ppi'), .3);
+    const ppiPill = pill(p, 'пирофосфат (PPi)', COL.int, 1100, 640, m('ppi', 1.2), 28);
+    hide(ppiPill, m('ase'), .3);
+    // pyrophosphatase splits it into two phosphates
+    say(p, 'пирофосфатаза', 1100, 560, m('ase'), { size: 26, fill: PROT, weight: 700 });
+    hide(tl, m('ase'), .4);
+    tw(pb, { x: 70, y: 200 }, m('ase'), .9); tw(pg, { x: 260, y: 200 }, m('ase'), .9);
+    pill(p, 'обратно не идёт', NO, 800, 790, m('ase', 1.2), 28);
+  }],
+  ['hypo', 'Если бы цепь росла наоборот', (m) => {
+    const p = panel(0), y1 = 270, y2 = 600, xs = [340, 460, 580];
+    const lbl = (s, x, y, t, c = COL.chalk) => say(p, s, x, y, t, { size: 28, fill: c, weight: 700, anchor: 'start' });
+    lbl('обычный синтез: 5′→3′', 90, 130, .3, DNA);
+    lbl('гипотетический: 3′→5′', 90, 460, .3, COL.int);
+    const chain = (xsArr, y, wrongIdx) => xsArr.map((x, i) => {
+      const g = G(p, { x, y }), r = 26;
+      if (i) seg1(p, xsArr[i - 1] + 26, y, x - 26, y);
+      mk('circle', { r, fill: BASE['ACG'[i]] }, g);
+      T(g, 'ACG'[i], { y: r * .4, size: r * 1.05, fill: COL.board, weight: 700, anchor: 'middle' });
+      return g;
+    });
+    // top row: real synthesis, growth at the 3′ end (right)
+    const cr = chain(xs, y1);
+    pDot(p, 400, y1, COL.dim, '', 9); pDot(p, 520, y1, COL.dim, '', 9);
+    endLab(p, '5′', 270, y1 + 10, .4);
+    const oh = say(p, '3′-OH', 685, y1 + 10, .4, { size: 26, fill: COL.int, weight: 700 });
+    const bad1 = mk('circle', { cx: xs[2], cy: y1, r: 36, fill: 'none', stroke: NO, 'stroke-width': 5 }, p);
+    put(bad1, { o: 0 });
+    const in1 = G(p, { o: 0 }), nIn = beadAt(in1, 1000, y1, 'T');
+    const tag1 = G(in1, { x: 960, y: y1 - 60 });
+    mk('rect', { x: -52, y: -20, width: 104, height: 40, rx: 20, fill: CARD, stroke: COL.int, 'stroke-width': 3 }, tag1);
+    T(tag1, 'PPP', { y: 10, size: 26, fill: COL.int, weight: 700, anchor: 'middle' });
+    say(in1, 'dNTP', 1000, y1 + 56, 0, { size: 24, fill: COL.dim, weight: 600 });
+    show(in1, .6);
+    // bottom row: hypothetical, growth at the 5′ end (left); the triphosphate sits on the chain's end
+    const xb = [840, 720, 600], cb = chain(xb, y2);
+    pDot(p, 780, y2, COL.dim, '', 9); pDot(p, 660, y2, COL.dim, '', 9);
+    endLab(p, '3′', 920, y2 + 10, .4);
+    const tag2 = G(p, { x: 560, y: y2 - 62, o: 0 });
+    mk('rect', { x: -52, y: -20, width: 104, height: 40, rx: 20, fill: CARD, stroke: COL.int, 'stroke-width': 3 }, tag2);
+    T(tag2, 'PPP', { y: 10, size: 26, fill: COL.int, weight: 700, anchor: 'middle' });
+    show(tag2, m('tri'));
+    hide(say(p, 'энергия на конце самой цепи', 330, y2 - 62, m('tri', .5), { size: 24, fill: COL.int, weight: 600 }), m('hyp'), .4);
+    const nIn2 = beadAt(p, 300, y2, 'T'), ohIn = say(p, '3′-OH', 300, y2 + 62, .8, { size: 22, fill: COL.dim, weight: 600 });
+    put(nIn2, { o: 0 }); show(nIn2, .8);
+    // error and proofreading, top
+    show(bad1, m('err'));
+    const errPill = pill(p, 'ошибка', NO, xs[2], y1 - 80, m('err'), 26);
+    const tR = m('real');
+    hide(errPill, tR - .2, .3);
+    tw(cr[2], { y: y1 - 80, o: 0 }, tR, .7); hide(bad1, tR, .3);
+    tw(oh, { x: 565 }, tR + .5, .6);
+    tw(in1, { x: -420 }, tR + 1.3, 1.1);
+    const ppi = pill(p, 'PPi', COL.int, 700, y1 - 110, tR + 2.6, 24);
+    tw(tag1, { y: -300, o: 0 }, tR + 2.5, .8);
+    hide(oh, tR + 2.6, .3);
+    pDot(p, 520, y1, COL.dim, '', 9);
+    yesNo(p, true, 900, y1 + 20, tR + 3, 1.6);
+    say(p, 'синтез продолжается', 1090, y1 + 30, tR + 3, { size: 28, fill: OK, weight: 700 });
+    hide(ppi, tR + 4.4, .4);
+    // hypothetical: the wrong nucleotide leaves with the triphosphate
+    const tH = m('hyp');
+    const bad2 = mk('circle', { cx: xb[2], cy: y2, r: 36, fill: 'none', stroke: NO, 'stroke-width': 5 }, p);
+    put(bad2, { o: 0 }); show(bad2, tH - 1.2, .3); hide(bad2, tH, .3);
+    tw(cb[2], { x: xb[2] - 100, y: y2 - 60, o: 0 }, tH, .8); tw(tag2, { x: 460, y: y2 - 120, o: 0 }, tH, .8);
+    const mono = pDot(p, 660, y2, COL.dim, 'P', 16);
+    put(mono, { o: 0 }); show(mono, tH + .8);
+    say(p, 'монофосфат', 640, y2 + 66, m('stop'), { size: 24, fill: COL.dim, weight: 600 });
+    tw(nIn2, { x: 480 }, m('stop', .6), 1);
+    const stop = G(p, { x: 565, y: y2, o: 0 });
+    mk('circle', { r: 30, fill: 'none', stroke: NO, 'stroke-width': 6 }, stop);
+    path(stop, 'M-18 18L18 -18', { stroke: NO, 'stroke-width': 6 });
+    show(stop, m('stop', 1.8));
+    pill(p, 'нет энергии: стоп', NO, 1230, y2 + 10, m('stop', 2), 30);
+  }],
+  ['q4', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz({ x: 300, y: 170, w: 1000, cls: 'side', maxH: 640 }, [{
+    id: 'c-proof', prompt: ['Гипотетическая полимераза растит цепь 3′→5′, и концевой нуклеотид оказался ошибочным. Корректура его отрезала. Почему синтез остановился?'],
+    build: choice(['Вместе с нуклеотидом ушёл концевой трифосфат, а на конце остался монофосфат без запаса энергии',
+      'Корректура не умеет отрезать нуклеотиды',
+      'Пирофосфатаза разрезала цепь по соседству',
+      'Полимераза потеряла матрицу'], 0,
+    'Энергия в этой схеме сидела бы на конце самой цепи; отрезав нуклеотид, фермент отрезал и её.',
+    [null, 'Умеет: в обычном синтезе она отрезает ошибку, и работа продолжается. Дело в том, где лежит энергия.',
+      'Пирофосфатаза расщепляет пирофосфат, цепь она не режет.',
+      'Матрица на месте; не хватает энергии, чтобы присоединить следующий нуклеотид.']),
+  }], done) }],
+  ['geom', 'Активный центр', (m) => {
+    const p = panel(0), cx = 840, cy = 470;
+    const body = mk('rect', { x: cx - 330, y: cy - 190, width: 660, height: 380, rx: 120, fill: mix(COL.board, PROT, .3), stroke: PROT, 'stroke-width': 4 }, p);
+    say(p, 'ДНК-полимераза', cx, cy - 120, .4, { size: 34, fill: PROT, weight: 700 });
+    const palm = say(p, '«ладонь»', cx, cy - 78, m('palm'), { size: 28, fill: PROT, weight: 600 });
+    const site = mk('circle', { cx: cx - 20, cy: cy + 30, r: 90, fill: 'none', stroke: COL.int, 'stroke-width': 4, 'stroke-dasharray': '10 8' }, p);
+    put(site, { o: 0 }); show(site, m('palm', .6));
+    say(p, 'активный центр', cx - 20, cy + 160, m('palm', .6), { size: 24, fill: COL.int, weight: 600 });
+    // primer comes from the lower left, its 3′ end sits in the pocket
+    path(p, `M130 640L${cx - 80} ${cy + 40}`, { stroke: DNA, 'stroke-width': 8, 'stroke-linecap': 'round' });
+    endLab(p, '5′', 100, 650, .4, DNA);
+    const oh = say(p, '3′-OH', cx - 80, cy + 92, m('palm', 1), { size: 26, fill: DNA, weight: 700 });
+    const dn = G(p, { o: 0 });
+    pDot(dn, cx + 20, cy + 40, COL.dim, 'P', 20);
+    pDot(dn, cx + 90, cy + 40, COL.int, 'P', 20); pDot(dn, cx + 160, cy + 40, COL.int, 'P', 20);
+    seg1(dn, cx + 40, cy + 40, cx + 70, cy + 40); seg1(dn, cx + 110, cy + 40, cx + 140, cy + 40);
+    beadAt(dn, cx + 20, cy - 24, 'A', 24);
+    T(dn, 'α', { x: cx + 20, y: cy + 96, size: 24, fill: COL.chalk, weight: 600, anchor: 'middle' });
+    show(dn, m('palm', 1.2));
+    arrowTo(p, cx - 80, cy + 20, cx - 8, cy + 30, COL.int, m('palm', 1.8));
+    pill(p, '5′-конец снаружи: нужной геометрии нет', NO, 800, 740, m('five'), 30);
+  }],
+  ['primer', 'Затравка', (m) => {
+    const p = panel(0), dx = 104, X0 = 280, Y0 = 400, gap = 240, n = 9;
+    const top = 'AGUCGATCG', cmp = { A: 'U', G: 'C', U: 'A', C: 'G', T: 'A' };
+    const botSeq = [...top].map(b => ({ A: 'T', G: 'C', U: 'A', C: 'G', T: 'A' }[b])).reverse().join('');
+    const rna = strand(p, top.slice(0, 4), X0, Y0, null, { dx, up: false, ends: false, r: 22, col: RNA });
+    const dna = strand(p, top.slice(4), X0 + 4 * dx, Y0, null, { dx, up: false, ends: false, r: 22, col: DNA });
+    const bot = strand(p, botSeq, X0 + (n - 1) * dx, Y0 + gap, .3, { dx, rev: true, ends: false, r: 22, col: COL.chalk });
+    const link = path(p, `M${X0 + 3 * dx} ${Y0}H${X0 + 4 * dx - dx / 2}`, { stroke: DNA, 'stroke-width': 4 }, { o: 0 });
+    const hb = i => {
+      const g = G(p, { o: 0 }), k = 'GC'.includes(top[i]) ? 3 : 2, y1 = Y0 + 96, y2 = Y0 + gap - 96;
+      for (let j = 0; j < k; j++) path(g, `M${X0 + i * dx + (j - (k - 1) / 2) * 13} ${y1}V${y2}`, { stroke: COL.chalk, 'stroke-width': 3, 'stroke-dasharray': '5 6' });
+      return g;
+    };
+    const bonds = [...top].map((_, i) => hb(i));
+    const yL = Y0 + 11, yB = Y0 + gap + 11;
+    endLab(p, '3′', X0 - 106, yB, .4); endLab(p, '5′', X0 + (n - 1) * dx + 90, yB, .4);
+    say(p, 'матрица', 130, yB + 70, .6, { size: 26, fill: COL.chalk, weight: 600, anchor: 'start' });
+    // no primer: the polymerase has nothing to extend
+    const pol = enzyme(p, 'ДНК-полимераза', X0 + 150, 175, null, { w: 250, h: 70, size: 26 });
+    put(pol, { o: 0 }); show(pol, m('denovo'));
+    const nope = G(p, { x: X0 + 150, y: 290, o: 0 });
+    path(nope, 'M-26 -26L26 26M26 -26L-26 26', { stroke: NO, 'stroke-width': 8 });
+    show(nope, m('denovo', 1.2)); hide(nope, m('primer'), .3);
+    const q = say(p, 'нет 3′-OH — не начнёт', X0 + 440, 290, m('denovo', 1.5), { size: 26, fill: NO, weight: 600 });
+    hide(q, m('primer'), .3);
+    pill(p, 'праймер = готовый 3′-OH', DNA, 1230, 80, m('primer'), 30);
+    // primase puts the RNA primer
+    hide(pol, m('primase'), .4);
+    const pm = enzyme(p, 'праймаза DnaG', X0 + 150, 175, null, { w: 250, h: 70, size: 26 });
+    put(pm, { o: 0 }); show(pm, m('primase'));
+    rna.units.forEach((u, i) => { put(u, { y: Y0 - 80 }); tw(u, { o: 1, y: Y0 }, m('primase', 1 + i * .5), .5); show(bonds[i], m('primase', 1.4 + i * .5), .3); });
+    endLab(p, '5′', X0 - 106, yL, m('primase', 1), RNA);
+    // not the transcription polymerase
+    const nt = G(p, { o: 0 });
+    T(nt, 'праймаза ≠ РНК-полимераза транскрипции', { x: 1130, y: 780, size: 26, fill: COL.dim, weight: 600, anchor: 'middle' });
+    show(nt, m('notrna'));
+    // length and extension by the DNA polymerase
+    hBracket(p, X0 - 40, X0 + 4 * dx - 60, Y0 - 120, '≈ 10–12 нт РНК', RNA, m('len'), { up: true, size: 26 });
+    hide(pm, m('len', 2), .4);
+    const pol2 = enzyme(p, 'ДНК-полимераза', X0 + 5 * dx, 175, null, { w: 250, h: 70, size: 26 });
+    put(pol2, { o: 0 }); show(pol2, m('len', 2));
+    show(link, m('len', 2.4), .3);
+    dna.units.forEach((u, i) => { put(u, { y: Y0 - 80 }); tw(u, { o: 1, y: Y0 }, m('len', 2.6 + i * .5), .5); show(bonds[4 + i], m('len', 3 + i * .5), .3); tw(pol2, { x: X0 + (5 + i) * dx }, m('len', 2.8 + i * .5), .4); });
+    say(p, 'ДНК', X0 + 6 * dx, Y0 - 100, m('len', 4.5), { size: 28, fill: DNA, weight: 700 });
+    endLab(p, '3′', X0 + 8 * dx + 54, yL - 6, m('len', 5.5), DNA);
+  }],
+  ['pnum', 'Сколько праймеров', (m) => {
+    const p = panel(0), fk = fork(p, 920, 450, .2, { ...FK, lead: 150, fr: fragsTo(3) });
+    const yT = fk.rail(-1, 400, 920) - 17;
+    const lp = path(p, `M150 ${yT}H${150 + PRIM}`, { stroke: RNA, 'stroke-width': 8 }, { o: 0 });
+    show(lp, m('how'));
+    pill(p, '1 праймер на всю лидирующую цепь', RNA, 520, yT - 56, m('how', 1), 28);
+    FR_R.forEach((r, k) => {
+      const y = fk.rail(1, r, 920) + 17;
+      const d = G(p, { o: 0 });
+      mk('circle', { cx: r - PRIM / 2, cy: y, r: 13, fill: RNA }, d);
+      show(d, m('each', .4 + k * .35)); pulse(d, m('each', .4 + k * .35), 1.5);
+    });
+    pill(p, 'на каждый фрагмент — свой праймер', RNA, 560, 700, m('each'), 28);
+    colorLine(p, [['на хромосому: '], [`от 2${NB}300 до 4${NB}600`, RNA], [' праймеров']], 800, 790, m('all'), { size: 36 });
+    // eukaryotes
+    const eu = G(p, { o: 0 });
+    T(eu, 'эукариоты: смешанная затравка', { x: 1190, y: 190, size: 26, fill: COL.dim, weight: 600, anchor: 'middle' });
+    mk('rect', { x: 1040, y: 214, width: 80, height: 26, rx: 8, fill: RNA }, eu);
+    mk('rect', { x: 1124, y: 214, width: 200, height: 26, rx: 8, fill: DNA }, eu);
+    T(eu, '≈ 10 нт РНК', { x: 1080, y: 270, size: 22, fill: RNA, weight: 600, anchor: 'middle' });
+    T(eu, '20–30 нт ДНК', { x: 1224, y: 270, size: 22, fill: DNA, weight: 600, anchor: 'middle' });
+    show(eu, m('euk'));
+  }],
+  ['recog', 'Преимущество 1: легко узнать', (m) => {
+    const p = panel(0);
+    pill(p, 'три преимущества РНК-праймера', COL.dim, 800, 80, .3, 28);
+    // sugar comparison
+    const sug = (x, y, lab, oh, col, name) => {
+      const g = G(p, { x, y, o: 0 });
+      mk('path', { d: `M${PENT}Z`, fill: CARD, stroke: COL.dim, 'stroke-width': 4, transform: 'scale(1.6)' }, g);
+      seg1(g, -28, 40, -28, 82, COL.dim, 3);
+      T(g, "2′", { x: -64, y: 74, size: 22, fill: COL.dim, weight: 600, anchor: 'middle' });
+      T(g, oh, { x: -28, y: 120, size: 36, fill: col, weight: 700, anchor: 'middle' });
+      T(g, name, { x: 0, y: 190, size: 24, fill: col, weight: 700, anchor: 'middle' });
+      return g;
+    };
+    show(sug(1130, 300, '', 'OH', RNA, 'рибоза (РНК)'), m('rec'));
+    show(sug(1430, 300, '', 'H', DNA, 'дезоксирибоза (ДНК)'), m('rec', 1));
+    say(p, 'отличие: 2′-OH', 1280, 190, m('rec', 1.8), { size: 28, fill: COL.int, weight: 700 });
+    // the strips: RNA primer + DNA, and an all-DNA primer
+    const strip = (y, split) => {
+      const g = G(p, { o: 0 });
+      mk('rect', { x: 150, y: y - 12, width: 120, height: 24, rx: 12, fill: split ? RNA : DNA }, g);
+      mk('rect', { x: 262, y: y - 12, width: 560, height: 24, rx: 12, fill: DNA }, g);
+      return g;
+    };
+    const A = strip(330, true), Bs = strip(580, false);
+    show(A, m('del')); show(Bs, m('dna'));
+    say(p, 'праймер из РНК', 210, 280, m('del'), { size: 26, fill: RNA, weight: 700 });
+    say(p, 'праймер из ДНК?', 210, 530, m('dna'), { size: 26, fill: DNA, weight: 700 });
+    const enz = enzyme(p, 'фермент', 900, 330, null, { w: 150, h: 64, size: 24 });
+    put(enz, { o: 0 }); show(enz, m('del', .6));
+    tw(enz, { x: 330 }, m('del', 1.2), 2);
+    pulse(enz, m('del', 3.4), 1.2);
+    tw(A.firstChild, { o: 0 }, m('del', 4.2), .6);
+    scissors(p, 210, 330, m('del', 3.8));
+    say(p, 'узнал рибозу и вырезал точно', 560, 400, m('del', 4.4), { size: 26, fill: OK, weight: 700 });
+    const enz2 = enzyme(p, 'фермент', 900, 580, null, { w: 150, h: 64, size: 24 });
+    put(enz2, { o: 0 }); show(enz2, m('dna', .6));
+    tw(enz2, { x: 330 }, m('dna', 1.2), 2.4);
+    const q2 = say(p, '?', 210, 600, m('dna', 3), { size: 70, fill: NO, weight: 700 });
+    say(p, 'где кончается праймер, не видно', 560, 650, m('dna', 3.2), { size: 26, fill: NO, weight: 700 });
+  }],
+  ['mark', 'Преимущество 2: метка «временно»', (m) => {
+    const p = panel(0), X = e => 240 + (e - 2) * 200, ay = 330;
+    pill(p, 'праймаза начинает с нуля — проверять нечего', RNA, 800, 80, m('mk'), 28);
+    // log axis of error rates
+    path(p, `M${X(2) - 40} ${ay}H${X(7) + 40}`, { stroke: COL.dim, 'stroke-width': 4 });
+    [2, 3, 4, 5, 6, 7].forEach(e => {
+      path(p, `M${X(e)} ${ay - 10}V${ay + 10}`, { stroke: COL.dim, 'stroke-width': 3 });
+      T(p, '10⁻' + '⁰¹²³⁴⁵⁶⁷⁸⁹'[e], { x: X(e), y: ay + 44, size: 24, fill: COL.dim, weight: 600, anchor: 'middle' });
+    });
+    say(p, 'ошибок на нуклеотид', X(2) - 40, ay - 90, m('rate'), { size: 24, fill: COL.dim, weight: 600, anchor: 'start' });
+    const dot = (e, c, s, y, t) => {
+      const g = G(p, { o: 0 });
+      mk('circle', { cx: X(e), cy: ay, r: 14, fill: c }, g);
+      T(g, s, { x: X(e), y: y, size: 26, fill: c, weight: 700, anchor: 'middle' });
+      show(g, t); pulse(g, t, 1.3);
+    };
+    dot(4, RNA, 'праймаза: около 10⁻⁴', ay - 40, m('rate'));
+    arrowTo(p, X(4) - 24, ay, X(3), ay, RNA, m('rate', 1.6));
+    say(p, 'или хуже', X(3) - 10, ay - 12, m('rate', 1.8), { size: 22, fill: RNA, weight: 600, anchor: 'end' });
+    dot(7, DNA, 'полимераза с корректурой: 10⁻⁷', ay + 90, m('pol'));
+    hBracket(p, X(4), X(7), ay + 130, 'в 1000 раз точнее', COL.int, m('pol', 1.5), { up: false, size: 28 });
+    // what if the primers stayed
+    const cb = G(p, { o: 0 });
+    T(cb, 'если бы праймеры остались:', { x: 800, y: 540, size: 28, fill: COL.dim, weight: 600, anchor: 'middle' });
+    show(cb, m('calc'));
+    colorLine(p, [[`2300 · 11 = 25${NB}300`], [' нт РНК', RNA]], 460, 600, m('calc', 1.5), { size: 32 });
+    colorLine(p, [[`4600 · 11 = 50${NB}600`], [' нт РНК', RNA]], 1140, 600, m('calc', 3), { size: 32 });
+    colorLine(p, [[`25${NB}300 · 10⁻⁴ ≈ 2,5     50${NB}600 · 10⁻⁴ ≈ 5`]], 800, 680, m('err'), { size: 32 });
+    pill(p, 'от 2,5 до 5 ошибок за копирование — только от затравок', NO, 800, 750, m('err', 1.5), 28);
+    pill(p, 'РНК = метка: заменить на ДНК с корректурой', OK, 800, 820, m('must'), 28);
+  }],
+  ['share', 'Преимущество 3: разделение работы', (m) => {
+    const p = panel(0);
+    const a = enzyme(p, 'праймаза', 420, 200, null, { w: 240, h: 70, size: 26 }), b = enzyme(p, 'полимераза', 1100, 200, null, { w: 260, h: 70, size: 26 });
+    put(a, { o: 0 }); put(b, { o: 0 }); show(a, m('work')); show(b, m('work', 1));
+    say(p, 'начинает', 420, 270, m('work', .4), { size: 28, fill: RNA, weight: 700 });
+    say(p, 'продолжает, точно', 1100, 270, m('work', 1.4), { size: 28, fill: DNA, weight: 700 });
+    arrowTo(p, 560, 200, 950, 200, COL.dim, m('work', 1.2));
+    // prices
+    pill(p, 'цена 1: затравки только у вилки', RNA, 500, 400, m('price'), 28);
+    say(p, 'DnaG держится за хеликазу DnaB — а она в вилке', 500, 450, m('price', 1.5), { size: 24, fill: COL.dim, weight: 600 });
+    pill(p, 'цена 2: двойная работа', RNA, 1150, 400, m('twice'), 28);
+    say(p, 'построить из РНК, вырезать, построить из ДНК', 1150, 450, m('twice', 1), { size: 24, fill: COL.dim, weight: 600 });
+    // the cost in proportion
+    const x0 = 200, W = 1200, y = 640;
+    mk('rect', { x: x0, y: y - 18, width: W, height: 36, rx: 6, fill: DNA, 'fill-opacity': .85 }, p);
+    const bar = p.lastChild; put(bar, { o: 0 }); show(bar, m('small'));
+    const sl = mk('rect', { x: x0, y: y - 30, width: 6, height: 60, fill: RNA }, p);
+    put(sl, { o: 0 }); show(sl, m('small', 1));
+    say(p, 'всего синтезируется ≈ 9,2 млн нт', x0 + W / 2, y + 66, m('small'), { size: 26, weight: 600 });
+    say(p, 'праймеры: 25–50 тыс. нт', x0 + 20, y - 54, m('small', 1), { size: 26, fill: RNA, weight: 700, anchor: 'start' });
+    pill(p, 'меньше 0,5 %', OK, 1160, y - 70, m('small', 2.2), 30);
+    say(p, 'кто убирает праймеры и сшивает фрагменты — главы 8 и 10', 800, 780, m('later'), { size: 24, fill: COL.dim, weight: 600 });
+  }],
+  ['q5', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz(WIDE, [{
+    id: 'c-rna', prompt: ['Верно или неверно?'], build: grid(Q_RNA, TF, { multi: false, text: true }),
+  }], done) }],
+  ['wrap', 'Итоги', (m) => {
+    const p = panel(0);
+    numbered(p, [
+      ['две вилки от одного ориджина: около 38 минут; три способа — θ, катящееся кольцо, D-петля', 'w1'],
+      ['цепь растёт только 5′→3′: лидирующая — непрерывно, отстающая — фрагментами Оказаки', 'w2'],
+      ['энергию несёт входящий dNTP, активный центр держит цепь только так', 'w3'],
+      ['праймаза начинает с нуля; РНК-затравку легко узнать и заменить на точную ДНК', 'w4'],
+    ], m, 180, 120, 30);
+    pill(p, 'кто строит цепи и как — в следующих главах', DNA, 800, 700, m('w4', 9), 26);
+  }],
+  ['final1', 'Практика главы', () => { panel(0); }, { ask: done => quiz(SCREEN, [{
+    id: 'p-num', prompt: ['Впишите числа (пробелы в числах можно не ставить).'], build: blanks(P_NUM),
+  }], done, 'Практика главы   1 из 3') }],
+  ['final2', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-tf', prompt: ['Верно или неверно?'], build: grid(P_TF, TF, { multi: false, text: true }),
+  }], done, 'Практика главы   2 из 3') }],
+  ['final3', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-strand', prompt: ['Какая это цепь?'], build: grid(P_STRAND, SCOLS, { multi: false, text: true }),
+  }], done, 'Практика главы   3 из 3') }],
+  ['finish', 'Готово', () => {}, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+// A short line sample with its meaning (legend).
+function legendBar(p, x, y, c, str, t0) {
+  const g = G(p, { o: 0 });
+  path(g, `M${x} ${y}h50`, { stroke: c, 'stroke-width': 8, 'stroke-linecap': 'butt' });
+  T(g, str, { x: x + 68, y: y + 8, size: 24, fill: c, weight: 600 });
+  show(g, t0);
+  return g;
+}
+
+/* ---------- question data ---------- */
+const WCOLS = [['t', 'θ-структура', null, '1'], ['r', 'катящееся кольцо', null, '2'], ['d', 'D-петля', null, '3']];
+const Q_WAYS = [
+  { parts: ['Хромосома кишечной палочки'], ans: ['t'], why: 'Две вилки уходят от oriC, между ними растёт пузырь.' },
+  { parts: ['Кольцевая ДНК митохондрий млекопитающих'], ans: ['d'], why: 'Две точки начала, ori_H и ori_L; вытесненная цепь держится петлёй.' },
+  { parts: ['Фаг λ на поздней стадии заражения'], ans: ['r'], why: 'Поздняя стадия даёт конкатемеры; сначала λ копируется θ-способом.' },
+  { parts: ['Одна цепь кольца разрезана, старая сматывается длинным хвостом'], ans: ['r'], why: 'Хвост служит матрицей для второй цепи, получается конкатемер.' },
+  { parts: ['Короткая 7S ДНК держит вытесненную цепь одиночной петлёй'], ans: ['d'], why: 'Короткая новая H-цепь остаётся спаренной с L-цепью.' },
+  { parts: ['Две вилки идут от одного ориджина навстречу друг другу по кольцу'], ans: ['t'], why: 'Это двунаправленная репликация: кольцо с пузырём похоже на букву θ.' },
+];
+const Q_FRAG = [
+  { parts: [`Отстающая цепь 2${NB}300${NB}000 нт, фрагмент 2000 нт: фрагментов `, { box: '1150' }], why: '2 300 000 / 2000 = 1150.', hint: 'Длину цепи разделите на длину фрагмента.' },
+  { parts: [`Та же цепь, фрагмент 1000 нт: фрагментов `, { box: '2300' }], why: '2 300 000 / 1000 = 2300.', hint: 'Фрагмент вдвое короче, значит, фрагментов вдвое больше.' },
+  { parts: [`Отстающая цепь 600${NB}000 нт, фрагмент 1500 нт: фрагментов `, { box: '400' }], why: '600 000 / 1500 = 400.', hint: '6000 / 15.' },
+];
+const Q_RNA = [
+  { parts: ['Праймер нужен, потому что ДНК-полимераза не умеет начинать цепь с нуля.'], ans: ['t'], why: 'Ей нужен готовый 3′-OH.' },
+  { parts: ['Ферменты удаляют РНК-праймер, узнавая его по урацилу, а не по рибозе.'], ans: ['f'], why: 'Они узнают РНК в паре с ДНК по рибозе (2′-OH).' },
+  { parts: ['Праймаза проверяет пары и ошибается реже, чем ДНК-полимераза.'], ans: ['f'], why: 'Начинать с нуля можно только без проверки: праймаза ошибается примерно раз на 10 000 нуклеотидов или чаще.' },
+  { parts: ['Лидирующей цепи хватает одного праймера в ориджине.'], ans: ['t'], why: 'Дальше она растёт непрерывно.' },
+  { parts: ['РНК-затравка служит меткой: её потом заменяют на ДНК, построенную с корректурой.'], ans: ['t'], why: 'Так ошибки праймазы не остаются в готовой ДНК.' },
+];
+const P_NUM = [
+  { parts: [`Хромосома 4${NB}600${NB}000 пар, две вилки по 1000 нт/с: время `, { box: '2300' }, ' с'], why: '4 600 000 / 2 / 1000 = 2300 с, около 38 минут.', hint: 'Каждая вилка копирует половину кольца.' },
+  { parts: [`Плазмида 120${NB}000 пар копируется θ-способом, две вилки по 1000 нт/с: `, { box: '60' }, ' с'], why: '120 000 / 2 / 1000 = 60 с.', hint: 'Две вилки делят кольцо пополам.' },
+  { parts: [`Отстающая цепь 1${NB}200${NB}000 нт, фрагмент 1500 нт: фрагментов `, { box: '800' }], why: '1 200 000 / 1500 = 800.', hint: '12 000 / 15.' },
+  { parts: ['Праймеров на эту отстающую цепь: ', { box: '800' }], why: 'На каждый фрагмент нужен свой праймер.', hint: 'Сколько фрагментов, столько и праймеров.' },
+  { parts: [`2000 праймеров по 10 нт: нуклеотидов РНК `, { box: '20000' }, ', ошибок при 10⁻⁴: ', { box: '2' }], why: '2000 · 10 = 20 000; 20 000 · 10⁻⁴ = 2.', hint: 'Сначала число нуклеотидов, потом умножьте на 1/10 000.' },
+];
+const P_TF = [
+  { parts: ['ДНК-полимераза присоединяет нуклеотид к 5′-концу растущей цепи.'], ans: ['f'], why: 'К 3′-концу: цепь растёт 5′→3′.' },
+  { parts: ['Энергию для присоединения нуклеотида несёт входящий dNTP.'], ans: ['t'], why: 'Внешние фосфаты трифосфата уходят как пирофосфат.' },
+  { parts: ['Фрагменты Оказаки у эукариот длиннее, чем у прокариот.'], ans: ['f'], why: '100–200 нт у эукариот против 1000–2000 нт у прокариот.' },
+  { parts: ['Катящееся кольцо даёт конкатемер: несколько копий генома подряд.'], ans: ['t'], why: 'Потом его режут на куски длиной в один геном.' },
+  { parts: ['Хромосома E. coli копируется по типу катящегося кольца.'], ans: ['f'], why: 'Она копируется θ-способом: две вилки от oriC.' },
+  { parts: ['Праймаза умеет начинать цепь с нуля.'], ans: ['t'], why: 'Поэтому и нужна: полимераза этого не умеет.' },
+  { parts: ['У E. coli праймер целиком из ДНК.'], ans: ['f'], why: 'Праймер из РНК, длиной около 10–12 нуклеотидов.' },
+  { parts: ['Корректура гипотетической полимеразы 3′→5′ остановила бы синтез.'], ans: ['t'], why: 'Отрезав ошибку, фермент унёс бы и концевой трифосфат, энергии для продолжения не осталось бы.' },
+];
+const SCOLS = [['l', 'лидирующая', null, '1'], ['g', 'отстающая', null, '2'], ['b', 'обе', null, '3']];
+const P_STRAND = [
+  { parts: ['Синтезируется непрерывно'], ans: ['l'], why: 'Полимераза идёт следом за вилкой без остановок.' },
+  { parts: ['Нужен праймер на каждый фрагмент'], ans: ['g'], why: 'Каждый фрагмент Оказаки начинается со своей затравки.' },
+  { parts: ['Её 3′-конец смотрит туда, куда движется вилка'], ans: ['l'], why: 'Так цепь можно наращивать, идя за вилкой.' },
+  { parts: ['Состоит из фрагментов Оказаки'], ans: ['g'], why: 'Вилка открывает кусок матрицы, полимераза застраивает его назад.' },
+  { parts: ['Растёт в направлении 5′→3′'], ans: ['b'], why: 'Ни одна ДНК-полимераза не строит цепь в обратную сторону.' },
+  { parts: ['Для начала синтеза нужна РНК-затравка'], ans: ['b'], why: 'Без затравки полимераза не начнёт ни одну из цепей; лидирующей хватает одной в ориджине.' },
+];
+boot();
+</script>
+</body>
+</html>
