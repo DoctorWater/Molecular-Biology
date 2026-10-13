@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ДНК-полимеразы кишечной палочки — ДНК и её копирование</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d2b27'/%3E%3Cpath d='M12 24H52M12 34H52' stroke='%23ece8dc' stroke-width='6'/%3E%3Cpath d='M12 44H52' stroke='%23f0b45a' stroke-width='6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<script src="../lib/engine.js"></script>
+<script src="../lib/bio.js"></script>
+<script src="audio/ru/timings.js"></script>
+<script>
+'use strict';
+const CHAPTER = { number: 8, title: 'ДНК-полимеразы кишечной палочки', minutes: 12, language: 'ru' };
+
+/* ---------- chapter drawing helpers (shared ones: lib/bio.js; the polymerase hand is `polymerase`) ---------- */
+const NB = ' ';
+const fmt = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, NB);
+const seg1 = (p, x1, y1, x2, y2, c = COL.dim, w = 4) => path(p, `M${x1} ${y1}L${x2} ${y2}`, { stroke: c, 'stroke-width': w });
+const endLab = (p, str, x, y, t0, fill = COL.chalk) => say(p, str, x, y, t0, { size: 30, weight: 700, fill });
+const cross = (p, x, y, t0, k = 1, c = NO) => {
+  const g = G(p, { x, y, o: 0, s: k });
+  path(g, 'M-26 -26L26 26M26 -26L-26 26', { stroke: c, 'stroke-width': 8 });
+  if (t0 != null) show(g, t0, .3);
+  return g;
+};
+function scissors(p, x, y, t0, c = PROT) {
+  const g = G(p, { x, y, o: 0 });
+  path(g, 'M-18 -10L30 14M-18 10L30 -14', { stroke: c, 'stroke-width': 5 });
+  [-1, 1].forEach(s => mk('circle', { cx: -28, cy: 15 * s, r: 10, fill: 'none', stroke: c, 'stroke-width': 4 }, g));
+  if (t0 != null) show(g, t0);
+  return g;
+}
+function pDot(p, x, y, c = COL.dim, lab = 'P', r = 22) {
+  const g = G(p, { x, y });
+  mk('circle', { r, fill: CARD, stroke: c, 'stroke-width': 4 }, g);
+  if (lab) T(g, lab, { y: r * .4, size: r * 1.1, fill: c, weight: 700, anchor: 'middle' });
+  return g;
+}
+// A nucleotide bead (base letter in its colour) with a backbone link of length `link` to the left, drawn in the class colour col.
+function nuc(p, x, y, b, col = DNA, link = 0, r = 20) {
+  const g = G(p, { x, y });
+  g.link = link ? path(g, `M${-link + r} 0H${-r}`, { stroke: col, 'stroke-width': 6 }) : null;
+  mk('circle', { r, fill: BASE[b] }, g);
+  T(g, b, { y: r * .4, size: r * 1.05, fill: COL.board, weight: 700, anchor: 'middle' });
+  return g;
+}
+const ring = (p, x, y, r = 30, c = NO) => put(mk('circle', { cx: x, cy: y, r, fill: 'none', stroke: c, 'stroke-width': 5 }, p), { o: 0 });
+// A big number that counts up (text element; the caller sets textContent) with a unit label.
+function counterAt(p, x, y, t0, unit, { size = 110, fill = DNA } = {}) {
+  const e = T(p, '0', { x, y, size, fill, weight: 700, anchor: 'end', o: 0 });
+  show(e, t0);
+  say(p, unit, x + 24, y, t0, { size: 30, fill: COL.dim, anchor: 'start', weight: 600 });
+  return e;
+}
+const ytag = (p, year, names, y, t0) => {
+  say(p, year, 90, y, t0, { size: 58, fill: DNA, weight: 700, anchor: 'start' });
+  say(p, names, 90 + uiW(year, 58) * 1.12 + 30, y - 6, t0 + .3, { size: 30, fill: COL.dim, weight: 600, anchor: 'start' });
+};
+
+// The hand scenes: polymerase at (HX, HY), the DNA drawn over it with column pitch PL; column c sits at HX − 36 + PL·c
+// (c = 0 is the 3′ end of the new strand, c = 1 the template base at the active site).
+const HX = 600, HY = 470, PL = 56;
+const hcx = (c, X = HX) => X - 36 + PL * c;
+// DNA in the channel: new strand newSeq (5′→3′, ends at c = 0), its template tmpl (same length), template bases ahead.
+function handDna(p, newSeq, tmpl, ahead, X = HX, Y = HY) {
+  const n = newSeq.length;
+  const top = [...newSeq].map((b, i) => nuc(p, hcx(i - n + 1, X), Y - 24, b, DNA, i ? PL : 0));
+  const bot = [...tmpl].map((b, i) => nuc(p, hcx(i - n + 1, X), Y + 24, b, COL.chalk, i ? PL : 0));
+  const ah = [...ahead].map((b, i) => nuc(p, hcx(i + 1, X), Y + 24, b, COL.chalk, PL));
+  const xl = hcx(1 - n, X) - 46;
+  endLab(p, '5′', xl, Y - 14, 0, DNA); endLab(p, '3′', xl, Y + 34, 0, COL.chalk);
+  endLab(p, '5′', hcx(ahead.length, X) + 48, Y + 34, 0, COL.chalk);
+  return { top, bot, ah };
+}
+// An incoming dNTP above the active site: bead b at (x, y) with a triphosphate chain going up; starts 150 px higher, hidden.
+function dntp(p, x, y, b, link = PL) {
+  const g = G(p, { x, y: y - 150, o: 0 });
+  g.ph = G(g);
+  seg1(g.ph, 0, -22, 0, -144, COL.int, 4);
+  [-56, -100, -144].forEach((yy, i) => pDot(g.ph, 0, yy, i ? COL.int : COL.dim, 'P', 18));
+  g.lk = put(path(g, `M${-link + 20} 0H-20`, { stroke: DNA, 'stroke-width': 6 }), { o: 0 });
+  nuc(g, 0, 0, b, DNA, 0);
+  g.drop = (t, dur = 1.1) => { show(g, t, .3); tw(g, { y }, t, dur); };
+  return g;
+}
+
+/* ---------- beats: [id, title, run(m, D), { ask }?] ---------- */
+const BEATS = [
+  ['intro', 'ДНК-полимеразы кишечной палочки', (m, D) => {
+    const g = G(scene, { o: 0, y: 24 });
+    T(g, 'Раздел 2 «Репликация ДНК у прокариот» · Глава 8', { x: 800, y: 330, size: 28, fill: COL.dim, anchor: 'middle' });
+    T(g, 'ДНК-полимеразы кишечной палочки', { x: 800, y: 440, size: 70, weight: 600, anchor: 'middle' });
+    tw(g, { o: 1, y: 0 }, .2, 1.1, out);
+    const r = say(scene, 'кто строит новые цепи', 800, 540, m('sub'), { size: 36, fill: COL.dim });
+    tw(g, { o: 0, y: -24 }, D - .9, .8); hide(r, D - .9, .8);
+  }],
+  ['quest', 'Кто копирует хромосому', (m) => {
+    const p = panel(0);
+    ytag(p, '1956', 'Артур Корнберг', 140, .4);
+    const pol = enzyme(p, 'Pol I', 1000, 300, null, { w: 300, h: 110, size: 46 });
+    put(pol, { o: 0 }); show(pol, m('name'));
+    say(p, 'строит ДНК по матрице', 1000, 400, m('name', .8), { size: 28, fill: COL.dim, weight: 600 });
+    pill(p, 'считали: копирует хромосому', DNA, 1000, 480, m('all'), 30);
+    ytag(p, '1969', 'Паула Де Лючия и Джон Кэрнс', 640, m('cairns'));
+    say(p, 'мутант без полимеразной активности Pol I', 90, 700, m('cairns', 2.2), { size: 28, fill: COL.chalk, weight: 600, anchor: 'start' });
+    cross(p, 1000, 300, m('lives', -.6), 2.2);
+    pill(p, 'клетка жива, делится, копирует ДНК', OK, 1050, 640, m('lives'), 30);
+    const q = say(p, 'кто же?', 1000, 790, m('who'), { size: 64, fill: DNA, weight: 700 });
+    pulse(q, m('who'), 1.2);
+  }],
+  ['five', 'Пять полимераз', (m) => {
+    const p = panel(0), cx = j => 530 + 220 * j, X0 = 90, X1 = 1520;
+    const names = [['Pol I', 'A'], ['Pol II', 'B'], ['Pol III', 'C'], ['Pol IV', 'Y'], ['Pol V', 'Y']];
+    names.forEach(([n, f], j) => {
+      say(p, n, cx(j), 130, .3 + j * .15, { size: 34, fill: PROT, weight: 700 });
+      say(p, `семейство ${f}`, cx(j), 162, .5 + j * .15, { size: 20, fill: COL.dim, weight: 600 });
+    });
+    const sep = (y, t) => { const l = path(p, `M${X0} ${y}H${X1}`, { stroke: COL.faint, 'stroke-width': 2 }, { o: 0 }); show(l, t); };
+    const row = (y, lab, cells, t) => {
+      sep(y - 50, t);
+      [].concat(lab).forEach((s, i, a) => say(p, s, X0, y + (i - (a.length - 1) / 2) * 30 + 8, t, { size: 24, fill: COL.chalk, weight: 600, anchor: 'start' }));
+      cells.forEach((c, j) => {
+        const t2 = t + .25 + j * .12;
+        if (c === true || c === false) yesNo(p, c, cx(j), y, t2, .8);
+        else if (c && c.ok !== undefined) { yesNo(p, c.ok, cx(j), y - 14, t2, .8); say(p, c.note, cx(j), y + 36, t2, { size: 20, fill: COL.dim, weight: 600 }); }
+        else [].concat(c).forEach((s, i, a) => say(p, s, cx(j), y + (i - (a.length - 1) / 2) * 28 + 8, t2, { size: 24, fill: j === 2 ? DNA : COL.chalk, weight: j === 2 ? 700 : 500 }));
+      });
+    };
+    row(255, ['молекул', 'на клетку'], ['≈ 400', '≈ 50', '≈ 10–20', '≈ 300', ['≈ 15', '(после SOS)']], m('num'));
+    row(365, ['экзонуклеаза 3′→5′', '(корректура)'], [true, true, { ok: true, note: 'субъединица ε' }, false, false], m('exo3'));
+    row(470, ['экзонуклеаза', '5′→3′'], [true, false, false, false, false], m('exo5'));
+    row(580, ['процессивность'], [['≈ 20 нт'], ['≈ 100 нт'], ['≈ 10 нт сама', '> 50 000 с β'], ['единицы нт', '≈ 300 с β'], ['единицы–десятки', 'нт']], m('proc'));
+    row(695, ['работа'], [['праймеры,', 'бреши, репарация'], 'репарация', ['копирует', 'хромосому'], ['обход', 'повреждений'], ['обход', 'повреждений (SOS)']], m('work'));
+  }],
+  ['exo', 'Две экзонуклеазы', (m) => {
+    const p = panel(0), xs = i => 300 + 70 * i, y1 = 290, y2 = 640;
+    // top: the error at the 3′ end is erased
+    const R1 = G(p, { o: 0 }), R2 = G(p, { o: 0 });
+    show(R1, .3);
+    const seq1 = 'GATCGAG', top = [...seq1].map((b, i) => nuc(R1, xs(i), y1, b, DNA, i ? 70 : 0, 26));
+    const bad = ring(p, xs(6), y1, 36);
+    endLab(R1, '5′', xs(0) - 56, y1 + 10, 0, DNA); const e3 = endLab(R1, '3′', xs(6) + 54, y1 + 10, 0, DNA);
+    say(p, 'экзонуклеаза 3′→5′: стирает свою ошибку', 90, 160, m('e3'), { size: 32, fill: COL.chalk, weight: 700, anchor: 'start' });
+    show(bad, m('e3', 1.2));
+    arrowTo(p, xs(6) + 30, y1 - 70, xs(6) - 170, y1 - 70, COL.int, m('e3', 2));
+    say(p, '3′→5′', xs(6) - 70, y1 - 90, m('e3', 2), { size: 28, fill: COL.int, weight: 700 });
+    tw(top[6], { y: y1 - 70, o: 0 }, m('e3', 5.2), .8); hide(bad, m('e3', 5.2), .3); tw(e3, { x: xs(5) + 54 }, m('e3', 5.6), .5);
+    yesNo(p, true, 1000, y1, m('e3', 6), 1.4);
+    // bottom: the primer ahead is eaten
+    const seq2 = 'GATCGAUCTGC';
+    show(R2, m('e5', -.3));
+    const bot = [...seq2].map((b, i) => nuc(R2, xs(i), y2, b, i > 4 && i < 8 ? RNA : DNA, i ? 70 : 0, 26));
+    endLab(R2, '5′', xs(0) - 56, y2 + 10, 0, DNA); endLab(R2, '3′', xs(4) + 8, y2 + 66, 0, DNA);
+    say(p, 'экзонуклеаза 5′→3′: съедает цепь впереди', 90, 510, m('e5'), { size: 32, fill: COL.chalk, weight: 700, anchor: 'start' });
+    arrowTo(p, xs(5) - 30, y2 - 70, xs(8) + 20, y2 - 70, COL.int, m('e5', 1.5));
+    say(p, '5′→3′', xs(6.5), y2 - 90, m('e5', 1.5), { size: 28, fill: COL.int, weight: 700 });
+    say(p, 'праймер', xs(6), y2 + 66, m('e5', 1.2), { size: 24, fill: RNA, weight: 700 });
+    [5, 6, 7].forEach((i, k) => tw(bot[i], { y: y2 - 60, o: 0 }, m('e5', 3 + k * .9), .6));
+    yesNo(p, true, 1180, y2, m('e5', 6.5), 1.4);
+  }],
+  ['q1', 'Быстрая проверка', () => {
+    const p = panel(0), xs = i => 380 + 70 * i, y = 480;
+    const seq = 'GATCGAUCTGC';
+    [...seq].forEach((b, i) => nuc(p, xs(i), y, b, i > 4 && i < 8 ? RNA : DNA, i ? 70 : 0, 26));
+    ring(p, xs(4), y, 36); put(p.lastChild, { o: 1 });
+    say(p, 'праймер', xs(6), y + 66, .3, { size: 24, fill: RNA, weight: 700 });
+    say(p, 'ошибка', xs(4), y + 66, .3, { size: 24, fill: NO, weight: 700 });
+    const a1 = G(p), a2 = G(p);
+    arrowTo(a1, xs(4) + 14, y - 70, xs(4) - 170, y - 70, COL.int, .3);
+    say(a1, '3′→5′', xs(4) - 78, y - 94, .3, { size: 28, fill: COL.int, weight: 700 });
+    arrowTo(a2, xs(5) + 30, y - 70, xs(7) + 70, y - 70, COL.int, .3);
+    say(a2, '5′→3′', xs(6) + 50, y - 94, .3, { size: 28, fill: COL.int, weight: 700 });
+    S.picks = [{ el: a1, box: [xs(4) - 200, y - 130, 240, 100], label: 'стрелка 3′→5′' }, { el: a2, box: [xs(5) + 10, y - 130, 250, 100], label: 'стрелка 5′→3′' }];
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-exo', prompt: ['Какая стрелка убирает праймер впереди полимеразы? Нажмите на неё.'],
+    build: pickEls(S.picks, 1, 'Экзонуклеаза 5′→3′ съедает цепь впереди полимеразы, так убирают РНК-праймер.',
+      () => 'Экзонуклеаза 3′→5′ работает на конце, который полимераза только что нарастила, и стирает ошибку, а не праймер впереди.'),
+  }], done) }],
+  ['gap', 'Pol I в бреши', (m) => {
+    const p = panel(0), Y = 520, xg = i => 330 + 56 * i, X = xg(5) - 20;
+    const pol = polymerase(p, X, Y, .3, { exo5: true, exo3: true, label: 'Pol I' });
+    const L = G(p, { o: 0 });
+    const top = 'GATCG' + 'AUC' + 'TGCAT', tm = 'CTAGC' + 'TAG' + 'ACGTA';
+    const t = [...top].map((b, i) => nuc(L, xg(i), Y - 24, b, i > 4 && i < 8 ? RNA : DNA, i ? 56 : 0));
+    [...tm].forEach((b, i) => nuc(L, xg(i), Y + 24, b, COL.chalk, i ? 56 : 0));
+    show(L, .4);
+    say(p, '3′-OH', X - 5, Y - 84, m('sit'), { size: 24, fill: COL.int, weight: 700 });
+    pol.light(pol.palm, m('sit', .6), 1.4);
+    const lab1 = say(p, 'экзонуклеаза 5′→3′ съедает праймер', 1290, 260, m('eat'), { size: 26, fill: RNA, weight: 700 });
+    pol.light(pol.nuc5, m('eat'), 4.2);
+    [5, 6, 7].forEach((i, k) => tw(t[i], { y: Y - 90, o: 0 }, m('eat', 1.2 + k * 1.1), .6));
+    say(p, 'и тут же полимераза достраивает ДНК', 1290, 660, m('fill'), { size: 26, fill: DNA, weight: 700 });
+    'ATC'.split('').forEach((b, k) => {
+      const n = nuc(L, xg(5 + k), Y - 24, b, DNA, 56); put(n, { o: 0, y: Y - 60 });
+      tw(n, { o: 1, y: Y - 24 }, m('fill', .8 + k * 1.1), .5);
+      tw(pol, { x: X + 56 * (k + 1) }, m('fill', 1.2 + k * 1.1), .5);
+    });
+  }],
+  ['klenow', 'Фрагмент Кленова', (m) => {
+    const p = panel(0), X = 520, Y = 560, k = .9, pol = polymerase(p, X, Y, .3, { s: k, exo5: true, exo3: true, label: 'Pol I · 103 кДа' });
+    const cutY = Y - 208 * k, cutL = path(p, `M${X + 36 * k} ${cutY}H${X + 270 * k}`, { stroke: NO, 'stroke-width': 4, 'stroke-dasharray': '10 8' }, { o: 0 });
+    show(cutL, m('cut', -1.6));
+    const sc = scissors(p, X + 300 * k, cutY, m('cut', -1.6));
+    tw(sc, { x: X + 40 * k }, m('cut', -1.4), 1.3);
+    hide(sc, m('cut', .2), .4); hide(cutL, m('cut', .2), .4);
+    tw(pol.nuc5, { x: 190, y: -70 }, m('cut', .2), 1.2);
+    hBracket(p, X - 300 * k, X + 300 * k, Y + 215 * k, 'большой фрагмент (Кленова)', PROT, m('big'), { up: false, size: 28 });
+    [['строит цепь', true], ['исправляет ошибки', true], ['съедает цепь впереди', false]].forEach(([s, ok], i) => {
+      const t = m('big', 7.2 + i * 1.1);
+      yesNo(p, ok, 1030, 500 + i * 60, t, .8);
+      say(p, s, 1070, 510 + i * 60, t, { size: 28, fill: ok ? COL.chalk : NO, weight: 600, anchor: 'start' });
+    });
+    say(p, 'малый фрагмент', 1150, 190, m('small'), { size: 30, fill: PROT, weight: 700 });
+    say(p, 'одна экзонуклеаза 5′→3′', 1150, 230, m('small', .4), { size: 26, fill: COL.dim, weight: 600 });
+    pill(p, 'им достраивали ДНК, не боясь разрушить соседей', DNA, 800, 856, m('lab'), 26);
+  }],
+  ['many', 'Сколько посадок', (m) => {
+    const p = panel(0), x0 = 200, W = 1200, y = 330;
+    say(p, 'хромосома: 4 600 000 пар нуклеотидов'.replace(/ (?=\d{3})/g, NB), 800, 220, .3, { size: 30, weight: 600 });
+    mk('rect', { x: x0, y: y - 18, width: W, height: 36, rx: 8, fill: COL.chalk, 'fill-opacity': .85 }, p);
+    put(p.lastChild, { o: 0 }); show(p.lastChild, .3);
+    pill(p, 'Pol I: ≈ 400 молекул на клетку', PROT, 800, 140, m('many'), 30);
+    say(p, 'за одну посадку ≈ 20 нт', x0 + 12, y - 62, m('slow'), { size: 26, fill: DNA, weight: 700, anchor: 'start' });
+    for (let i = 0; i < 46; i++) {
+      const r = mk('rect', { x: x0 + i * 26 + 1, y: y - 18, width: 24, height: 36, rx: 4, fill: DNA }, p);
+      put(r, { o: 0 }); show(r, m('slow', .5 + i * .07), .15);
+    }
+    colorLine(p, [[`4${NB}600${NB}000 / 20 = `], [`230${NB}000`, DNA]], 800, 500, m('calc'), { size: 40 });
+    const c = counterAt(p, 1000, 660, m('calc', 1.5), 'посадок', { size: 100 });
+    prog(q => { c.textContent = fmt(Math.round(230000 * q)); }, m('calc', 1.5), 4, lin);
+  }],
+  ['mutants', 'Два мутанта', (m) => {
+    const p = panel(0), xa = 640, W = 760, y1 = 330, y2 = 560;
+    const lane = (y, name, note, t) => {
+      say(p, name, 100, y - 10, t, { size: 34, weight: 700, anchor: 'start' });
+      say(p, note, 100, y + 26, t + .3, { size: 22, fill: COL.dim, weight: 600, anchor: 'start' });
+      mk('rect', { x: xa, y: y - 14, width: W, height: 28, rx: 14, fill: CARD, stroke: COL.dim, 'stroke-width': 2 }, p);
+      const f = mk('rect', { x: xa, y: y - 14, width: 0, height: 28, rx: 14, fill: DNA }, p);
+      return f;
+    };
+    const f1 = lane(y1, 'polA1', 'нет полимеразной активности Pol I', m('a')), f2 = lane(y2, 'ts-dnaE', 'ts-мутация α-субъединицы Pol III', m('ts'));
+    [f1, f2].forEach((f, i) => put(f.previousSibling, { o: 0 }));
+    show(f1.previousSibling, m('a')); show(f2.previousSibling, m('ts'));
+    const grow = (f, a, b, t, d) => prog(q => f.setAttribute('width', Math.max(0, W * (a + (b - a) * q))), t, d, lin);
+    // the temperature
+    say(p, 'температура', 800, 140, m('ts', 8), { size: 24, fill: COL.dim, weight: 600 });
+    const tt = T(p, '30 °C', { x: 800, y: 205, size: 64, weight: 700, anchor: 'middle', fill: COL.whole, o: 0 });
+    show(tt, m('ts', 8));
+    prog(q => { tt.textContent = `${Math.round(30 + 12 * q)} °C`; tt.setAttribute('fill', mix(COL.whole, NO, q)); }, m('heat'), 1.6, lin);
+    grow(f1, 0, .45, m('ts', 9), 3.5); grow(f2, 0, .45, m('ts', 9), 3.5);
+    grow(f2, .45, .58, m('heat'), 1.6);
+    grow(f1, .45, 1, m('a2'), 4.5);
+    cross(p, xa + W * .58, y2, m('b2'), 1.1);
+    say(p, 'при 42 °C репликация встала', xa + W * .58, y2 + 74, m('b2'), { size: 26, fill: NO, weight: 700 });
+    say(p, 'идёт при любой температуре', xa + W - 10, y1 + 56, m('a2', 3), { size: 26, fill: OK, weight: 700, anchor: 'end' });
+  }],
+  ['verdict', 'Вывод', (m) => {
+    const p0 = panel(0);
+    infoCard(p0, 120, 190, 640, 'Pol I', [['делится без неё, хуже терпит УФ', COL.chalk], ['работа: доделка и репарация', DNA], ['≈ 400 молекул, ≈ 20 нт за посадку', COL.dim]], PROT, .4, 1.6);
+    infoCard(p0, 840, 190, 640, 'Pol III', [['самая быстрая: ≈ 1000 нт/с', COL.chalk], ['самая процессивная', COL.chalk], ['без неё репликация встаёт', COL.chalk]], PROT, m('fast'), 1.3);
+    pill(p0, 'хромосому копирует Pol III', OK, 800, 640, m('ans'), 36);
+  }],
+  ['q2', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz({ x: 300, y: 170, w: 1000, cls: 'side', maxH: 640 }, [{
+    id: 'c-who', prompt: ['Мутант polA1 без полимеразной активности Pol I живёт и копирует ДНК, а ts-мутант dnaE при 42 °C сразу прекращает репликацию. Какой вывод?'],
+    build: choice(['Хромосому копирует Pol III, а Pol I занимается доделкой и репарацией',
+      'Хромосому копирует Pol I, а Pol III нужна только для репарации',
+      'Обе полимеразы копируют хромосому в равной мере',
+      'Репликация идёт без ДНК-полимераз'], 0,
+    'Без Pol I репликация идёт, без α-субъединицы Pol III при 42 °C встаёт: хромосому копирует Pol III.',
+    [null, 'Наоборот: без Pol I клетка копирует ДНК, а ts-мутация в гене dnaE останавливает репликацию.',
+      'Мутации по двум полимеразам дают разный результат: Pol I без активности не мешает, Pol III без α мешает.',
+      'Ни одна из мутаций не отменяет полимеразу целиком: нужная полимераза остаётся и работает.']),
+  }], done) }],
+  ['tls', 'Обход повреждений', (m) => {
+    const p = panel(0), xc = i => 330 + 80 * i, yN = 470, yT = 530, r = 26;
+    pill(p, 'Pol II: репарация', PROT, 330, 150, m('two'), 28);
+    pill(p, 'Pol IV и Pol V: семейство Y', PROT, 860, 150, m('iv'), 28);
+    const tm = [...'CTAGTTCAGC'].map((b, i) => nuc(p, xc(i), yT, b, COL.chalk, i ? 80 : 0, r));
+    const newSeq = 'GATCAAGTCG', nw = [...newSeq].map((b, i) => {
+      const n = nuc(p, xc(i), yN, i === 4 ? 'G' : b, DNA, i ? 80 : 0, r);
+      if (i > 3) put(n, { o: 0 });
+      return n;
+    });
+    const dim = G(p, { o: 0 });
+    path(dim, `M${xc(4)} ${yT + 38}Q${(xc(4) + xc(5)) / 2} ${yT + 78} ${xc(5)} ${yT + 38}`, { stroke: NO, 'stroke-width': 5 });
+    T(dim, 'тиминовый димер', { x: (xc(4) + xc(5)) / 2, y: yT + 112, size: 26, fill: NO, weight: 700, anchor: 'middle' });
+    show(dim, m('stop', 1.5));
+    const p3 = enzyme(p, 'Pol III', xc(3) + 20, 380, null, { w: 170, h: 64, size: 28 });
+    put(p3, { o: 0 }); show(p3, .4);
+    tw(p3, { x: xc(3) + 38 }, m('stop', 4.2), .3); tw(p3, { x: xc(3) + 20 }, m('stop', 4.5), .4);
+    const x3 = cross(p, xc(4), 380, m('stop', 4.2), .8);
+    say(p, 'не принимает искажённую пару', xc(6) + 40, 384, m('stop', 6), { size: 26, fill: NO, weight: 700, anchor: 'start' });
+    hide(x3, m('pass'), .3);
+    hide(p3, m('pass'), .4);
+    hide(p.lastChild, m('pass'), .3);
+    const p5 = enzyme(p, 'Pol V', xc(3) + 20, 380, null, { w: 170, h: 64, size: 28 });
+    put(p5, { o: 0 }); show(p5, m('pass', .4));
+    nw.slice(4, 8).forEach((n, k) => {
+      const t = m('pass', 1.6 + k * 1.3);
+      put(n, { y: yN - 40 }); tw(n, { o: 1, y: yN }, t, .5); tw(p5, { x: xc(4 + k) + 20 }, t - .2, .6);
+    });
+    const e = ring(p, xc(4), yN, 36); show(e, m('err'));
+    pill(p, 'ошибка', NO, xc(4), yN - 130, m('err'), 26);
+    tw(p5, { o: 0 }, m('lesser', -1), .5);
+    pill(p, 'вилка встала навсегда — клетка гибнет', NO, 800, 740, m('lesser'), 28);
+    pill(p, 'одна мутация — скорее всего, нет', OK, 800, 810, m('lesser', 2.2), 28);
+  }],
+  ['sos', 'Полимеразы Y и SOS', (m) => {
+    const p = panel(0);
+    infoCard(p, 100, 150, 680, 'Pol V', [['обходит тиминовые димеры', COL.chalk], ['входит в SOS-ответ: аварийную программу', COL.chalk], ['при сильном повреждении ДНК', COL.dim]], PROT, m('v'), 1.4);
+    infoCard(p, 860, 150, 640, 'Pol IV', [['другие повреждения:', COL.chalk], ['добавки к азоту N² гуанина', COL.chalk]], PROT, m('iv'), 1.3);
+    say(p, 'активная Pol V в клетке', 100, 590, m('none'), { size: 28, fill: COL.dim, weight: 600, anchor: 'start' });
+    say(p, 'без SOS: почти нет', 100, 670, m('none', 1.2), { size: 30, fill: COL.chalk, weight: 700, anchor: 'start' });
+    for (let i = 0; i < 15; i++) {
+      const d = enzyme(p, null, 560 + (i % 8) * 84, 730 + Math.floor(i / 8) * 64, null, { w: 64, h: 40 });
+      put(d, { o: 0 }); show(d, m('after', .3 + i * .12), .25);
+    }
+    say(p, 'после SOS: ≈ 15', 100, 760, m('after'), { size: 30, fill: PROT, weight: 700, anchor: 'start' });
+  }],
+  ['hand', 'Правая рука', (m) => {
+    const p = panel(0), pol = polymerase(p, HX, HY, .3, { names: true, label: 'ДНК-полимераза' });
+    const L = G(p, { o: 0 });
+    handDna(L, 'CGATC', 'GCTAG', 'TGC'); show(L, .5);
+    say(p, 'как правая рука', 1250, 190, m('hand'), { size: 30, fill: PROT, weight: 700 });
+    const lines = [['ладонь', 'каталитический центр', 'palm'], ['пальцы', 'берут нуклеотид и матрицу', 'fingers'], ['большой палец', 'держит дуплекс', 'thumb']];
+    lines.forEach(([a, b, k], i) => {
+      const t = m(k), part = pol[{ palm: 'palm', fingers: 'fingers', thumb: 'thumb' }[k]];
+      colorLine(p, [[a, PROT], [' — ' + b]], 950, 300 + i * 70, t, { size: 28, anchor: 'start' });
+      tw(part.lab, { o: 1 }, t, .4);
+      pol.light(part, t, 3.4);
+    });
+    tw(pol.fingers, { r: FINGERS_SHUT }, m('fingers', 5), .9);
+  }],
+  ['ions', 'Два иона магния', (m) => {
+    const p = panel(0), X = 480, Y = 470, pol = polymerase(p, X, Y, .3, { label: 'ДНК-полимераза' });
+    const L = G(p, { o: 0 });
+    handDna(L, 'CGATC', 'GCTAG', 'TGC', X, Y); show(L, .5);
+    pol.asp.forEach((a, i) => { show(a, m('asp', .3 + i * .4), .3); });
+    pol.mg.forEach((a, i) => { show(a, m('mg', .3 + i * .3), .3); pulse(a, m('mg', .3 + i * .3), 1.4); });
+    // zoom card on the reaction
+    const z = G(p, { o: 0 });
+    mk('rect', { x: 900, y: 170, width: 640, height: 600, rx: 22, fill: CARD, stroke: COL.dim, 'stroke-width': 2.5 }, z);
+    T(z, 'активный центр', { x: 1220, y: 215, size: 26, fill: COL.dim, weight: 600, anchor: 'middle' });
+    show(z, m('mg', .2));
+    T(z, '3′-OH', { x: 1010, y: 350, size: 26, fill: COL.int, weight: 700, anchor: 'middle' });
+    pDot(z, 1010, 400, COL.chalk, 'O', 20);
+    nuc(z, 1150, 290, 'A', DNA, 0, 24); seg1(z, 1150, 314, 1150, 378, DNA, 5);
+    pDot(z, 1150, 400, COL.dim, 'P', 22); pDot(z, 1260, 400, COL.int, 'P', 22); pDot(z, 1370, 400, COL.int, 'P', 22);
+    seg1(z, 1172, 400, 1238, 400, COL.int, 4); seg1(z, 1282, 400, 1348, 400, COL.int, 4);
+    [['α', 1150], ['β', 1260], ['γ', 1370]].forEach(([s, x]) => T(z, s, { x, y: 452, size: 24, fill: COL.chalk, weight: 600, anchor: 'middle' }));
+    const ion = (x, y, lab) => {
+      const g = G(z, { x, y });
+      mk('circle', { r: 24, fill: COL.chalk }, g);
+      T(g, 'Mg', { y: 7, size: 20, fill: COL.board, weight: 700, anchor: 'middle' });
+      T(g, '2+', { x: 24, y: -14, size: 18, fill: COL.chalk, weight: 700 });
+      return g;
+    };
+    const dash = (x1, y1, x2, y2) => path(z, `M${x1} ${y1}L${x2} ${y2}`, { stroke: COL.chalk, 'stroke-width': 3, 'stroke-dasharray': '7 6' });
+    const A = G(z, { o: 0 }), B = G(z, { o: 0 });
+    const lA = [dash(1090, 520, 1020, 424), dash(1090, 520, 1140, 424)], lB = [dash(1315, 520, 1270, 424), dash(1315, 520, 1360, 424)];
+    lA.forEach(l => A.appendChild(l)); lB.forEach(l => B.appendChild(l));
+    ion(1090, 545); ion(1315, 545);
+    [[1060, 650], [1120, 650], [1315, 650]].forEach(([x, y], i) => {
+      const d = G(z, { x, y }); mk('circle', { r: 17, fill: PROT }, d); T(d, 'D', { y: 8, size: 22, fill: COL.board, weight: 700, anchor: 'middle' });
+      seg1(z, x, y - 17, i < 2 ? 1090 : 1315, 570, PROT, 3);
+    });
+    say(z, 'аспартаты держат ионы', 1220, 712, 0, { size: 22, fill: PROT, weight: 600 });
+    // roles
+    const atk = G(p, { o: 0 });
+    path(atk, 'M1020 372Q1090 320 1128 380', { stroke: COL.int, 'stroke-width': 4 });
+    mk('path', { d: 'M1134 388L1118 380L1136 370Z', fill: COL.int }, atk);
+    show(atk, m('one', .4));
+    show(A, m('one'), .3);
+    say(p, 'ион 1: помогает атаке 3′-OH на α-фосфат', 1220, 810, m('one'), { size: 24, fill: COL.chalk, weight: 600 });
+    show(B, m('two'), .3);
+    pill(p, 'уходит пирофосфат', COL.int, 1400, 330, m('two', .8), 22);
+    say(p, 'ион 2: удерживает уходящий пирофосфат', 1220, 850, m('two'), { size: 24, fill: COL.chalk, weight: 600 });
+    pill(p, 'механизм двух ионов металла', DNA, 480, 790, m('name'), 30);
+  }],
+  ['q3', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz(WIDE, [{
+    id: 'c-dom', prompt: ['У какого домена «руки» эта роль?'],
+    build: grid(Q_DOM, DCOLS, { multi: false, text: true }),
+  }], done) }],
+  ['select', 'Отбор нуклеотида', (m) => {
+    const p = panel(0), pol = polymerase(p, HX, HY, .3, { label: 'отбор: до того, как связь замкнулась' });
+    const L = G(p, { o: 0 });
+    handDna(L, 'CGATC', 'GCTAG', 'TTC'); show(L, .5);
+    const right = dntp(p, hcx(1), HY - 24, 'A'), wrong = dntp(p, hcx(2) + 12, HY - 40, 'G');
+    // the correct nucleotide
+    right.drop(m('right'));
+    say(p, 'A–T и G–C: одна форма и размер', 1250, 300, m('right', 2.5), { size: 26, fill: COL.chalk, weight: 600 });
+    tw(pol.fingers, { r: FINGERS_SHUT }, m('close'), .8);
+    show(right.lk, m('bond'), .3);
+    tw(right.ph, { y: -30, o: 0 }, m('bond'), .8);
+    yesNo(p, true, 1250, 380, m('bond'), 1.2);
+    say(p, 'пальцы сомкнулись — связь образуется', 1250, 440, m('bond', .2), { size: 26, fill: OK, weight: 700 });
+    // the next position: a wrong nucleotide (G against T)
+    tw(pol, { x: HX + PL }, m('wrong'), .8); tw(pol.fingers, { r: 0 }, m('wrong'), .8);
+    wrong.drop(m('wrong', 1));
+    const dl = path(p, `M${hcx(2) + 12} ${HY - 18}V${HY + 4}`, { stroke: NO, 'stroke-width': 5, 'stroke-dasharray': '4 4' }, { o: 0 });
+    show(dl, m('wrong', 2.2), .3);
+    say(p, 'G–T: пара искажена', 1250, 560, m('wrong', 1.5), { size: 26, fill: NO, weight: 700 });
+    tw(pol.fingers, { r: -2 }, m('stuck'), .7); tw(pol.fingers, { r: 0 }, m('stuck', 1.1), .5);
+    say(p, 'пальцы не закрылись до конца', 1250, 610, m('stuck'), { size: 26, fill: NO, weight: 700 });
+    tw(wrong, { y: HY - 240, o: 0 }, m('leave'), 1); hide(dl, m('leave'), .3);
+    cross(p, hcx(2) + 6, HY - 120, m('leave', .2), .8);
+    say(p, 'неверный нуклеотид уходит', 1250, 660, m('leave'), { size: 26, fill: COL.chalk, weight: 700 });
+  }],
+  ['proof', 'Корректура', (m) => {
+    const p = panel(0), pol = polymerase(p, HX, HY, .3, { exo3: true, label: 'корректура: после ошибки' });
+    const L = G(p, { o: 0 });
+    const d = handDna(L, 'GATCG', 'CTAGT', 'GC'); show(L, .5);
+    const bad = d.top[4], er = ring(L, hcx(0), HY - 24, 34);
+    show(er, m('err'));
+    say(p, 'кривая пара на конце', 1250, 300, m('err'), { size: 26, fill: NO, weight: 700 });
+    // the end jumps into the exonuclease pocket
+    const px = HX - 170, py = HY + 128;
+    tw(bad, { x: px, y: py }, m('jump'), 1.2); tw(er, { x: px - hcx(0), y: py - (HY - 24) }, m('jump'), 1.2);
+    bad.link.setAttribute('d', 'M-30 0H-20');
+    say(p, 'экзонуклеазный центр', px, HY + 250, m('jump', .4), { size: 26, fill: PROT, weight: 700 });
+    say(p, 'перескок', 1250, 360, m('jump'), { size: 26, fill: COL.int, weight: 700 });
+    tw(bad, { y: py + 90, o: 0 }, m('cut'), .9); hide(er, m('cut'), .3);
+    say(p, 'ошибочный нуклеотид отщеплён', 1250, 420, m('cut'), { size: 26, fill: COL.chalk, weight: 700 });
+    const fix = nuc(L, hcx(0), HY - 24, 'A', DNA, PL); put(fix, { o: 0 });
+    show(fix, m('back'), .6);
+    yesNo(p, true, 1250, 490, m('back'), 1.2);
+    say(p, 'синтез продолжается', 1250, 550, m('back', .2), { size: 26, fill: OK, weight: 700 });
+    say(p, 'Pol I, Pol II: домен той же молекулы', 1250, 660, m('who'), { size: 24, fill: COL.chalk, weight: 600 });
+    say(p, 'Pol III: отдельная субъединица ε', 1250, 710, m('who', 2), { size: 24, fill: DNA, weight: 600 });
+  }],
+  ['ladder', 'Три ступени точности', (m) => {
+    const p = panel(0), xa = 720, ys = [290, 470, 650];
+    say(p, 'ошибок на копию генома 4,6·10⁶ пар', 1480, 175, .4, { size: 24, fill: COL.dim, weight: 600, anchor: 'end' });
+    say(p, 'шкала длины полос логарифмическая', 100, 175, .4, { size: 22, fill: COL.dim, weight: 600, anchor: 'start' });
+    const step = (y, lab, e, rate, calc, res, t) => {
+      say(p, lab, 100, y + 10, t, { size: 28, weight: 700, anchor: 'start' });
+      const w = 100 * (11 - e), b = mk('rect', { x: xa, y: y - 27, width: w, height: 54, rx: 10, fill: DNA, 'fill-opacity': .9 }, p);
+      put(b, { o: 0 }); show(b, t + .3);
+      say(p, `на нуклеотид: ${rate}`, xa, y - 40, t + .3, { size: 24, fill: COL.dim, weight: 600, anchor: 'start' });
+      say(p, calc, xa, y + 60, t + .6, { size: 24, fill: COL.dim, weight: 600, anchor: 'start' });
+      const r = say(p, res, 1480, y + 16, t + .6, { size: 56, fill: DNA, weight: 700, anchor: 'end' });
+      pulse(r, t + .6, 1.1);
+    };
+    step(ys[0], 'только отбор', 5, '10⁻⁵', '4,6·10⁶ × 10⁻⁵ ≈ 46', '≈ 46', m('s1'));
+    step(ys[1], '+ корректура ε', 7, '10⁻⁷', '4,6·10⁶ × 10⁻⁷ ≈ 0,46', '≈ 0,46', m('s2'));
+    step(ys[2], '+ репарация неспаренных оснований', 10, '10⁻¹⁰', '4,6·10⁶ × 10⁻¹⁰ ≈ 0,00046', '≈ 0,00046', m('s3'));
+    pill(p, '1 / 0,00046 ≈ 2200: одна ошибка на 2200 копий', OK, 1000, 770, m('once'), 28);
+    pill(p, 'без ε и репарации: около 46 мутаций в дочерней клетке', NO, 800, 840, m('half'), 26);
+  }],
+  ['q4', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz({ x: 300, y: 170, w: 1000, cls: 'side', maxH: 640 }, [{
+    id: 'c-err', prompt: ['Посчитайте ошибки на одну копию генома.'], build: blanks(Q_ERR),
+  }], done) }],
+  ['wrap', 'Итоги', (m) => {
+    const p = panel(0);
+    numbered(p, [
+      ['Pol I доделывает и чинит, хромосому копирует Pol III: это показали мутанты', 'w1'],
+      ['Pol IV и Pol V проходят через повреждения, но без корректуры часто ошибаются', 'w2'],
+      ['у полимеразы форма правой руки: ладонь, пальцы, большой палец, в ладони два иона Mg²⁺', 'w3'],
+      ['точность: отбор нуклеотида, корректура ε и репарация, от 10⁻⁵ до 10⁻¹⁰ ошибок на нуклеотид', 'w4'],
+    ], m, 180, 120, 30);
+  }],
+  ['final1', 'Практика главы', () => { panel(0); }, { ask: done => quiz(SCREEN, [{
+    id: 'p-num', prompt: ['Впишите числа (пробелы в числах можно не ставить).'], build: blanks(P_NUM),
+  }], done, 'Практика главы   1 из 3') }],
+  ['final2', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-tf', prompt: ['Верно или неверно?'], build: grid(P_TF, TF, { multi: false, text: true }),
+  }], done, 'Практика главы   2 из 3') }],
+  ['final3', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-pol', prompt: ['Какая это полимераза?'], build: grid(P_POL, PCOLS, { multi: false, text: true }),
+  }], done, 'Практика главы   3 из 3') }],
+  ['finish', 'Готово', () => {}, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+/* ---------- question data ---------- */
+const DCOLS = [['p', 'ладонь', null, '1'], ['f', 'пальцы', null, '2'], ['t', 'большой палец', null, '3']];
+const Q_DOM = [
+  { parts: ['Здесь замыкается фосфодиэфирная связь'], ans: ['p'], why: 'Ладонь — каталитический центр.' },
+  { parts: ['Смыкаются над правильной парой'], ans: ['f'], why: 'Пальцы закрываются, когда пара правильная.' },
+  { parts: ['Держит двойную спираль праймер—матрица'], ans: ['t'], why: 'Большой палец помогает полимеразе не отваливаться.' },
+  { parts: ['Захватывают входящий нуклеотид и матрицу'], ans: ['f'], why: 'Это работа пальцев.' },
+  { parts: ['Сидят консервативные аспартаты, удерживающие ионы магния'], ans: ['p'], why: 'Два иона Mg²⁺ работают в ладони.' },
+];
+const Q_ERR = [
+  { parts: [`Геном 5·10⁶ пар, ошибка 10⁻⁷ на нуклеотид: `, { box: '0,5' }], why: '5·10⁶ × 10⁻⁷ = 0,5.', hint: 'Умножьте длину генома на частоту ошибки.' },
+  { parts: [`Геном 2·10⁶ пар, только отбор (10⁻⁵): `, { box: '20' }], why: '2·10⁶ × 10⁻⁵ = 20.', hint: '2·10⁶ / 10⁵.' },
+  { parts: [`Геном 3·10⁶ пар, с репарацией (10⁻¹⁰): `, { box: '0,0003' }], why: '3·10⁶ × 10⁻¹⁰ = 3·10⁻⁴ = 0,0003.', hint: '10⁶ × 10⁻¹⁰ = 10⁻⁴.' },
+];
+const P_NUM = [
+  { parts: [`Геном 4${NB}600${NB}000 пар, Pol I пристраивает 20 нт за посадку: посадок `, { box: '230000' }], why: '4 600 000 / 20 = 230 000.', hint: '460 000 / 2.' },
+  { parts: [`Pol III без ε (10⁻⁵), геном 4,6·10⁶ пар: ошибок на копию `, { box: '46' }], why: '4,6·10⁶ × 10⁻⁵ = 46.', hint: '4,6·10⁶ / 10⁵.' },
+  { parts: [`С корректурой ε (10⁻⁷), геном 3·10⁶ пар: ошибок на копию `, { box: '0,3' }], why: '3·10⁶ × 10⁻⁷ = 0,3.', hint: '3·10⁶ / 10⁷.' },
+  { parts: [`С репарацией (10⁻¹⁰), геном 2·10⁶ пар: ошибок на копию `, { box: '0,0002' }], why: '2·10⁶ × 10⁻¹⁰ = 2·10⁻⁴ = 0,0002.', hint: '10⁶ × 10⁻¹⁰ = 10⁻⁴.' },
+  { parts: [`Одна вилка копирует 4${NB}600${NB}000 пар со скоростью 1000 нт/с: `, { box: '4600' }, ' с'], why: '4 600 000 / 1000 = 4600 с.', hint: 'Число пар разделите на скорость.' },
+];
+const P_TF = [
+  { parts: ['Все пять ДНК-полимераз E. coli строят цепь в направлении 5′→3′.'], ans: ['t'], why: 'Ни одна не строит в обратную сторону.' },
+  { parts: ['Экзонуклеаза 5′→3′ есть у Pol III.'], ans: ['f'], why: 'Только у Pol I: ею убирают праймеры.' },
+  { parts: ['Фрагмент Кленова — это Pol I без 5′→3′-экзонуклеазы.'], ans: ['t'], why: 'Остаются полимераза и 3′→5′-экзонуклеаза.' },
+  { parts: ['Мутант polA1 не способен копировать хромосому.'], ans: ['f'], why: 'Он копирует ДНК и делится, только хуже терпит ультрафиолет.' },
+  { parts: ['ts-мутация в гене dnaE при 42 °C останавливает репликацию.'], ans: ['t'], why: 'α-субъединица нужна Pol III, а Pol III копирует хромосому.' },
+  { parts: ['У Pol IV и Pol V есть корректирующая экзонуклеаза.'], ans: ['f'], why: 'Корректуры у них нет, поэтому они часто ошибаются.' },
+  { parts: ['Отбор нуклеотида и корректура — одна и та же стадия.'], ans: ['f'], why: 'Отбор идёт до замыкания связи, корректура — после ошибки.' },
+  { parts: ['Два иона Mg²⁺ в ладони участвуют в присоединении нуклеотида.'], ans: ['t'], why: 'Один помогает атаке 3′-OH, другой держит уходящий пирофосфат.' },
+];
+const PCOLS = [['a', 'Pol I', null, '1'], ['c', 'Pol III', null, '2'], ['y', 'Pol IV и Pol V', null, '3']];
+const P_POL = [
+  { parts: ['Убирает РНК-праймер и заполняет бреши'], ans: ['a'], why: 'У Pol I есть 5′→3′-экзонуклеаза.' },
+  { parts: ['Копирует хромосому'], ans: ['c'], why: 'Самая быстрая и самая процессивная.' },
+  { parts: ['Проходит через тиминовый димер'], ans: ['y'], why: 'Их активный центр просторнее, чем у Pol III.' },
+  { parts: ['Корректура — отдельная субъединица ε'], ans: ['c'], why: 'У Pol I и Pol II экзонуклеаза — домен той же молекулы.' },
+  { parts: ['Нет корректуры'], ans: ['y'], why: 'Поэтому через повреждение они часто проводят ошибку.' },
+  { parts: ['Протеаза делит её на большой и малый фрагменты'], ans: ['a'], why: 'Большой — фрагмент Кленова.' },
+];
+boot();
+</script>
+</body>
+</html>
