@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ДНК-полимеразы эукариот — ДНК и её копирование</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d2b27'/%3E%3Cpath d='M12 24H52M12 34H52' stroke='%23ece8dc' stroke-width='6'/%3E%3Cpath d='M12 44H52' stroke='%23f0b45a' stroke-width='6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<!-- impeccable ignore-value side-tab: the card side accent in ../lib/engine.css is kept on purpose (owner confirmed 2026-10-14) -->
+<script src="../lib/engine.js"></script>
+<script src="../lib/bio.js"></script>
+<script src="audio/ru/timings.js"></script>
+<script>
+'use strict';
+const CHAPTER = { number: 13, title: 'ДНК-полимеразы эукариот', minutes: 17, language: 'ru', next: null };
+
+/* ---------- chapter drawing helpers (shared ones: lib/bio.js — polymerase, enzyme, fork, dsIcon, betaRing, clampSide, strand, duplex) ---------- */
+const endLab = (p, str, x, y, t0, fill = COL.chalk) => say(p, str, x, y, t0, { size: 30, weight: 700, fill });
+const line = (p, str, x, y, t0, fill = COL.chalk, size = 28, anchor = 'start', weight = 600) => say(p, str, x, y, t0, { size, fill, anchor, weight });
+
+// a small polymerase "hand" with a caption under it; the wrapper fades as a whole (o 0 until shown)
+function pico(p, x, y, lab, s = .16, { dy = 30, size = 26, fill = COL.chalk } = {}) {
+  const g = G(p, { x, y, o: 0 });
+  g.pol = polymerase(g, 0, 0, null, { s });
+  if (lab) g.cap = T(g, lab, { y: 202 * s + dy, size, fill, weight: 700, anchor: 'middle' });
+  return g;
+}
+// a nucleotide bead
+function bead(p, x, y, b, r = 20) {
+  const g = G(p, { x, y });
+  mk('circle', { r, fill: BASE[b] }, g);
+  T(g, b, { y: r * .4, size: r * 1.05, fill: COL.board, weight: 700, anchor: 'middle' });
+  return g;
+}
+const crossX = (p, x, y, k = 1, c = NO) => { const g = G(p, { x, y, s: k }); path(g, 'M-26 -26L26 26M26 -26L-26 26', { stroke: c, 'stroke-width': 8 }); return g; };
+// the ubiquitin mark
+function ubi(p, x, y, r = 17) {
+  const g = G(p, { x, y });
+  mk('circle', { r, fill: COL.int }, g);
+  T(g, 'Ub', { y: r * .36, size: r * 1.0, fill: COL.board, weight: 700, anchor: 'middle' });
+  return g;
+}
+const strip = (p, x, y, w, h, col, o = 1) => put(mk('rect', { x, y, width: w, height: h, rx: Math.min(10, h / 2), fill: col }, p), { o });
+// a text that changes at time t (one element, text only)
+const swap = (e, str, t) => prog(() => { e.textContent = str; }, t, .01, lin);
+
+/* ---------- template + new strand with the PCNA clamp around them (signal, pass, gate) ---------- */
+const TY = 525, NY = 481, RY = 503;
+function pcnaStrand(p, { x0 = 160, tx1 = 1500, nx1 = 655, ringX = 500 } = {}) {
+  const pb = G(p);
+  const tpl = path(p, `M${x0} ${TY}H${tx1}`, { stroke: COL.chalk, 'stroke-width': 8 });
+  const nw = path(p, `M${x0} ${NY}H${nx1}`, { stroke: DNA, 'stroke-width': 8 });
+  const pf = G(p);
+  const ring = clampSide(pb, pf, ringX, RY, null, { rx: 18, ry: 50, sw: 11 });
+  return { tpl, nw, ring, ringX };
+}
+
+/* ---------- the five main polymerases: one card per row (five, q1) ---------- */
+const FIVE = [['α', 'праймаза + короткий участок ДНК', false], ['δ', 'отстающая цепь', true], ['ε', 'лидирующая цепь', true], ['γ', 'митохондриальная ДНК', true], ['β', 'репарация: замена одного основания', false]];
+const rowY = i => 130 + i * 100;
+function fiveRows(p, t0, withTasks) {
+  return FIVE.map(([g, task], i) => {
+    const y = rowY(i), r = G(p, { o: 0 });
+    mk('rect', { x: 100, y, width: 1400, height: 88, rx: 16, fill: CARD, stroke: COL.dim, 'stroke-width': 2.5 }, r);
+    polymerase(r, 196, y + 44, null, { s: .16 });
+    T(r, 'Pol ' + g, { x: 300, y: y + 56, size: 38, weight: 700 });
+    show(r, t0 + i * .12);
+    const t = T(p, task, { x: 470, y: y + 56, size: 32, fill: DNA, weight: 600, o: 0 });
+    if (withTasks) show(t, t0 + .5);
+    return { r, t, y };
+  });
+}
+// pick several stage objects (like pickEls, but all of `rights` must be pressed)
+const pickMulti = (items, rights, yes, no) => (body, api) => {
+  const L = qlayer();
+  let locked = false, cur = -1, got = 0;
+  const hits = items.map((it, i) => {
+    const [x, y, w, hh] = it.box, g = G(L);
+    g.classList.add('hit'); g.setAttribute('tabindex', 0); g.setAttribute('role', 'button'); g.setAttribute('aria-label', it.label);
+    mk('rect', { class: 'ring', x, y, width: w, height: hh, rx: 12 }, g);
+    const act = () => {
+      if (locked || g.classList.contains('good')) return;
+      if (rights.includes(i)) { g.classList.add('good'); g.classList.remove('bad'); if (++got === rights.length) api.grade(true, yes); }
+      else { g.classList.add('bad'); shakeFx(it.el); api.grade(false, no(i)); }
+    };
+    g.addEventListener('click', act);
+    keyAct(g, act);
+    return g;
+  });
+  return {
+    reveal() { hits.forEach((g, i) => rights.includes(i) && g.classList.add('good')); return yes; },
+    lock() { locked = true; },
+    hint: [kbd('↑'), kbd('↓'), ' выбор, ', kbd('Enter'), ' нажать или щёлкните'],
+    key(e) {
+      const d = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+      if (!d || locked) return false;
+      cur = cur < 0 ? (d > 0 ? 0 : hits.length - 1) : (cur + d + hits.length) % hits.length;
+      hits[cur].focus();
+      return true;
+    },
+  };
+};
+
+/* ---------- beats: [id, title, run(m, D), { ask }?] ---------- */
+const BEATS = [
+  ['intro', 'ДНК-полимеразы эукариот', (m, D) => {
+    const g = G(scene, { o: 0, y: 24 });
+    T(g, 'Раздел 3 «Эукариотическая вилка» · Глава 13', { x: 800, y: 330, size: 28, fill: COL.dim, anchor: 'middle' });
+    T(g, 'ДНК-полимеразы эукариот', { x: 800, y: 440, size: 70, weight: 600, anchor: 'middle' });
+    tw(g, { o: 1, y: 0 }, .2, 1.1, out);
+    const r = say(scene, 'пятнадцать ферментов, у каждого своя работа', 800, 540, m('sub'), { size: 36, fill: COL.dim });
+    tw(g, { o: 0, y: -24 }, D - .9, .8); hide(r, D - .9, .8);
+  }],
+
+  ['count', 'Пятнадцать полимераз', (m) => {
+    const p = panel(0), NAMES = ['α', 'δ', 'ε', 'γ', 'β', 'ζ', 'λ', 'μ', 'θ', 'ν', 'η', 'ι', 'κ', 'Rev1', 'TdT'];
+    const row = NAMES.map((n, i) => { const g = pico(p, 100 + i * 100, 330, n, .15, { dy: 26, size: 24 }); put(g, { o: 0 }); tw(g, { o: .3 }, .3 + i * .06, .4); return g; });
+    const ic = dsIcon(p, 800, 165, 'old', 'old', null, { w: 1300, gap: 28, sw: 9 }); put(ic, { o: 0 }); show(ic, m('genome'));
+    line(p, 'геном ≈ 6,4·10⁹ п.н.', 800, 105, m('genome'), COL.chalk, 32, 'middle', 700);
+    [0, 1, 2].forEach(i => { tw(row[i], { o: 1 }, m('genome', .6 + i * .3), .4); row[i].pol.light(row[i].pol.palm, m('genome', .6 + i * .3), 1.6); });
+    hBracket(p, 390, 1510, 440, 'ремонт · обход повреждений · мтДНК', COL.dim, m('rest'), { up: false, size: 28 });
+    line(p, 'кишечная палочка', 100, 560, m('ecoli'), COL.chalk, 28, 'start', 700);
+    ['I', 'II', 'III', 'IV', 'V'].forEach((n, i) => {
+      const g = pico(p, 400 + i * 140, 620, 'Pol ' + n, .15, { dy: 26, size: 24 }); show(g, m('ecoli', .2 + i * .15));
+      if (i === 2) { pulse(g, m('ecoli', 1.6), 1.3); line(p, 'ведёт репликацию', 680, 740, m('ecoli', 1.6), DNA, 26, 'middle', 700); }
+    });
+    const L = pill(p, 'копирует точно и быстро', OK, 480, 830, m('why'), 28), R = pill(p, 'обходит повреждения', COL.int, 1120, 830, m('why', 1.6), 28);
+    const br = G(p, { o: 0 });
+    path(br, 'M690 830H780M820 830H910', { stroke: COL.dim, 'stroke-width': 5 });
+    mk('path', { d: 'M910 830l-18 -12v24z', fill: COL.dim }, br); mk('path', { d: 'M690 830l18 -12v24z', fill: COL.dim }, br);
+    crossX(br, 800, 830, .45);
+    show(br, m('why', 3));
+  }],
+
+  ['five', 'Пять главных', (m) => {
+    const p = panel(0), rows = fiveRows(p, .3, false);
+    ['a', 'd', 'e', 'g', 'b'].forEach((k, i) => { show(rows[i].t, m(k)); pulse(rows[i].r, m(k), 1.03); });
+    line(p, 'корректура', 1370, 108, m('proof'), COL.chalk, 28, 'middle', 700);
+    FIVE.forEach(([, , pr], i) => yesNo(p, pr, 1370, rowY(i) + 46, m('proof', .5 + i * .3), 1.3));
+  }],
+
+  ['q1', 'Быстрая проверка', () => {
+    const p = panel(0), rows = fiveRows(p, .2, true);
+    S.picks = rows.map((r, i) => ({ el: r.r, box: [100, rowY(i), 1400, 88], label: 'Pol ' + FIVE[i][0] }));
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-nopf', prompt: ['У каких двух из пяти полимераз нет корректуры? Нажмите на обе.'],
+    build: pickMulti(S.picks, [0, 4], 'У Pol α и Pol β экзонуклеазного центра нет.',
+      i => `У Pol ${FIVE[i][0]} корректура есть: экзонуклеазный центр показан в колонке корректуры.`),
+  }], done) }],
+
+  ['work', 'Pol α и праймаза', (m) => {
+    const p = panel(0), TYy = 545, NYy = 505;
+    path(p, `M240 ${TYy}H1380`, { stroke: COL.chalk, 'stroke-width': 8 });
+    endLab(p, '3′', 205, TYy + 11, .3); endLab(p, '5′', 1415, TYy + 11, .3); endLab(p, '5′', 205, NYy + 11, .3);
+    const rna = path(p, `M290 ${NYy}H410`, { stroke: RNA, 'stroke-width': 11 }, { d: 0 });
+    const dna = path(p, `M410 ${NYy}H650`, { stroke: DNA, 'stroke-width': 9 }, { d: 0 });
+    const pr = enzyme(p, 'праймаза', 350, 390, .3, { w: 160, h: 58, size: 24 });
+    const pa = pico(p, 460, 385, 'Pol α', .26, { dy: 30 }); show(pa, .3);
+    draw(rna, m('prim'), 1.4); tw(pa, { x: 560 }, m('prim', 1.6), 1.8);
+    draw(dna, m('prim', 1.6), 1.8); hide(pr, m('prim', 3.4), .5);
+    line(p, 'РНК ≈ 10 нт', 350, 595, m('prim', 1), RNA, 24, 'middle', 700);
+    line(p, 'ДНК ≈ 20 нт', 530, 595, m('prim', 3), DNA, 24, 'middle', 700);
+    hBracket(p, 290, 650, 625, '≈ 30 нт', COL.chalk, m('prim', 3.4), { up: false, size: 26 });
+    pill(p, '1 ошибка на 10⁴–10⁵ нт', NO, 1180, 385, m('err'), 28);
+    pill(p, 'корректуры нет', NO, 1180, 450, m('err', 1.2), 28);
+    const rfc = enzyme(p, 'RFC', 690, 385, m('switch'), { w: 110, h: 56, size: 26 });
+    tw(pa, { x: 520, y: 270, o: 0 }, m('switch'), 1);
+    const de = pico(p, 1010, 385, 'Pol δ / ε', .26, { dy: 30 }); show(de, m('switch', .5));
+    tw(de, { x: 880 }, m('switch', .6), 1);
+    pill(p, 'переключение', COL.int, 800, 290, m('switch', .3), 28);
+    // what stays: 1,5 % of the genome
+    strip(p, 250, 770, 1100, 34, COL.faint, 0); const gen = p.lastChild; show(gen, m('cut')); gen.setAttribute('fill-opacity', .35);
+    const gr = strip(p, 250, 770, 16.5, 34, DNA, 0); show(gr, m('cut', .8));
+    line(p, 'геном', 250, 752, m('cut'), COL.dim, 24, 'start', 600);
+    line(p, '≈ 1,5 % генома — ДНК, которую синтезировала Pol α', 290, 840, m('cut', .8), DNA, 26, 'start', 700);
+    tw(rna, { o: .3 }, m('cut'), .8); tw(dna, { o: .3 }, m('cut'), .8);
+  }],
+
+  ['split', 'Pol δ и Pol ε', (m) => {
+    const p = panel(0), ga = G(p);
+    const hand = (x, y, s, lab, kda) => {
+      const g = G(ga, { o: 0 }), h = polymerase(g, x, y, null, { s, exo3: true });
+      put(h.exo, { o: 0 });
+      T(g, lab, { x, y: y - 202 * s - 56, size: 34, weight: 700, anchor: 'middle' });
+      T(g, kda, { x, y: y - 202 * s - 18, size: 28, fill: COL.chalk, weight: 600, anchor: 'middle' });
+      return { g, h };
+    };
+    const d = hand(330, 330, .28, 'Pol δ', '≈ 124 кДа'), e = hand(780, 330, .41, 'Pol ε', '≈ 262 кДа');
+    show(d.g, .3); show(e.g, m('size'), .6);
+    [d, e].forEach((o, i) => { show(o.h.exo, m('exo', .3 + i * .5), .5); pulse(o.h.exo, m("exo", .3 + i * .5), 1.2); });
+    line(ga, 'экзонуклеаза — в той же белковой цепи', 555, 520, m('exo', .6), COL.chalk, 26, 'middle', 600);
+    const e3 = G(ga, { o: 0 }); polymerase(e3, 1330, 330, null, { s: .28, exo3: false }); show(e3, m('exo', 3.5));
+    T(e3, 'Pol III · кишечная палочка', { x: 1330, y: 215, size: 28, fill: COL.dim, weight: 700, anchor: 'middle' });
+    const sb = enzyme(e3, 'ε', 1330, 450, null, { w: 80, h: 56, size: 28 }); put(sb, { o: 1 });
+    T(e3, 'отдельная субъединица', { x: 1330, y: 505, size: 24, fill: PROT, weight: 600, anchor: 'middle' });
+    // dependence
+    const rg = betaRing(ga, 330, 650, null, { s: .26 }); put(rg, { o: 0 }); show(rg, m('dep'));
+    line(ga, 'PCNA', 330, 745, m('dep'), PROT, 28, 'middle', 700);
+    line(ga, 'процессивна только на PCNA', 330, 790, m('dep', .5), COL.chalk, 24, 'middle', 600);
+    const cm = enzyme(ga, 'CMG', 780, 650, null, { w: 150, h: 70, size: 28 }); put(cm, { o: 0 }); show(cm, m('dep', 3));
+    line(ga, 'ещё и на хеликазе CMG', 780, 745, m('dep', 3), COL.chalk, 24, 'middle', 600);
+    // the fork
+    tw(ga, { o: 0 }, m('div', -.4), .5);
+    const q = G(p, { o: 0 });
+    const fk = fork(q, 1000, 430, null, { xEnd: 1480, A: 30, P: 80, n: 4, back: 330, spread: 120, hel: 'CMG', lead: 330, fr: [[860, 640, 12], [620, 400, 12]] });
+    show(q, m('div'), .6);
+    const yT = fk.rail(-1, 880, 1000) - 17, yB = fk.rail(1, 700, 1000) + 17;
+    const pe = pico(q, 900, yT - 62, null, .2); show(pe, m('div', .6)); line(q, 'Pol ε', 900, yT - 135, m('div', .6), COL.chalk, 26, 'middle', 700);
+    const pd = pico(q, 700, yB + 62, null, .2); show(pd, m('div', 1.6));
+    line(q, 'Pol δ', 700, yB + 150, m('div', 1.6), COL.chalk, 26, 'middle', 700);
+    line(q, 'лидирующая цепь', 520, yT - 105, m('div', .6), DNA, 26, 'middle', 700);
+    line(q, 'отстающая цепь', 480, yB + 125, m('div', 1.6), DNA, 26, 'middle', 700);
+    endLab(q, '3′', 175, fk.rail(-1, 180, 1000) + 11, m('div')); endLab(q, '5′', 175, fk.rail(1, 180, 1000) + 11, m('div'));
+    // error signatures
+    [[420, 640, -1, -17], [420, 600, 1, 17]].forEach(([a, b, s, off], k) => {
+      for (let j = 0; j < 5; j++) { const xx = a + 25 + j * 36 + k * 6, yy = fk.rail(s, xx, 1000) + off; const t = path(q, `M${xx} ${yy - 15}V${yy + 15}`, { stroke: NO, 'stroke-width': 5 }); put(t, { o: 0 }); show(t, m('sig', .3 + k * 1.4 + j * .12), .3); }
+    });
+    line(q, 'ошибки ε', 540, yT - 40, m('sig', .3), NO, 26, 'middle', 700);
+    line(q, 'ошибки δ', 520, yB + 55, m('sig', 1.7), NO, 26, 'middle', 700);
+    const ar = arrowTo(q, 740, yB - 25, 810, yT + 30, COL.int, m('debate'), true);
+    pill(q, '?', COL.int, 800, (yB + yT) / 2 + 20, m('debate', .3), 34);
+    line(q, 'δ участвует и в лидирующем синтезе?', 1140, 780, m('debate', .5), COL.int, 26, 'middle', 700);
+  }],
+
+  ['gamma', 'Pol γ', (m) => {
+    const p = panel(0), cx = 380, cy = 450, R = 120;
+    [R, R - 16].forEach((r, i) => mk('circle', { cx, cy, r, fill: 'none', stroke: i ? COL.chalk : DNA, 'stroke-width': 7 }, p));
+    line(p, 'митохондриальная ДНК', cx, 640, .3, COL.chalk, 28, 'middle', 700);
+    const pg = pico(p, cx, cy - R - 30, null, .3); show(pg, .3); line(p, 'Pol γ', cx, cy - R - 100, .3, COL.chalk, 32, 'middle', 700);
+    const fam = pill(p, 'семейство A', PROT, 1130, 140, m('fam'), 34);
+    const a = pico(p, 960, 290, 'Pol I · E. coli', .2, { dy: 26, size: 24 }), b = pico(p, 1300, 290, 'Pol γ', .2, { dy: 26, size: 24 });
+    show(a, m('fam', .6)); show(b, m('fam', 1)); line(p, '≈', 1130, 308, m('fam', 1.2), PROT, 48, 'middle', 700);
+    const pc = betaRing(p, 1130, 590, null, { s: .27 }); put(pc, { o: 0 }); show(pc, m('nopcna'));
+    line(p, 'PCNA', 1130, 700, m('nopcna'), PROT, 28, 'middle', 700);
+    const x = crossX(p, 1130, 590, 2.6); put(x, { o: 0 }); show(x, m('nopcna', 1.6));
+    line(p, 'в митохондрию не попадает', 1130, 760, m('nopcna', 1.6), NO, 26, 'middle', 700);
+    const s1 = enzyme(p, 'Pol γB', cx - 210, cy - R - 30, m('sub'), { w: 130, h: 54, size: 24 });
+    const s2 = enzyme(p, 'Pol γB', cx + 210, cy - R - 30, m('sub', .6), { w: 130, h: 54, size: 24 });
+    line(p, 'добавочные субъединицы', cx, 165, m('sub', 1.2), PROT, 26, 'middle', 700);
+    tw(s1, { x: cx - 135 }, m('grip'), .8); tw(s2, { x: cx + 135 }, m('grip'), .8);
+    pill(p, 'держат фермент на ДНК', DNA, cx, 720, m('grip', .8), 26);
+  }],
+
+  ['beta', 'Pol β и замена основания', (m) => {
+    const p = panel(0), DY = 520, d = duplex(p, 'GATCAGT', 260, DY, .3, { dx: 110, gap: 190, t1: .3 });
+    const u = d.top.units[3], bx = d.top.xAt(3), BY = DY + 70;
+    // the damaged base sits on the top strand: glycosylase takes it out, the endonuclease cuts the backbone
+    const gl = enzyme(p, 'гликозилаза', bx + 380, 250, m('gap'), { w: 190, h: 56, size: 24 });
+    tw(gl, { x: bx + 40, y: 330 }, m('gap', .5), .8);
+    const hl = put(mk('circle', { cx: bx, cy: BY, r: 34, fill: 'none', stroke: NO, 'stroke-width': 5 }, p), { o: 0 }); show(hl, m('gap', 1.3), .3);
+    tw(u.bead, { y: -150, o: 0 }, m('gap', 2), .9); hide(hl, m('gap', 2.2), .3);
+    hide(gl, m('gap', 2.4), .5);
+    const en = enzyme(p, 'эндонуклеаза', bx + 380, 250, m('gap', 2.6), { w: 200, h: 56, size: 24 });
+    tw(en, { x: bx + 70, y: 400 }, m('gap', 3), .7);
+    const cut = path(p, `M${bx + 52} ${DY - 22}L${bx + 76} ${DY + 22}`, { stroke: NO, 'stroke-width': 5 }); put(cut, { o: 0 }); show(cut, m('gap', 3.7), .3);
+    hide(en, m('gap', 4.4), .5);
+    line(p, 'брешь в один нуклеотид', bx, 800, m('gap', 4.2), COL.chalk, 26, 'middle', 700);
+    // Pol β puts a nucleotide in, the second domain removes the sugar-phosphate remnant
+    const pb = pico(p, bx, 220, 'Pol β', .22, { dy: 26 }); show(pb, m('ins'));
+    const nn = bead(p, bx, 330, 'C'); put(nn, { o: 0 }); tw(nn, { o: 1 }, m('ins', .5), .4); tw(nn, { y: BY }, m('ins', .9), .9);
+    const rem = G(p, { x: bx + 64, y: DY + 24, o: 0 }); mk('rect', { x: -26, y: -13, width: 52, height: 26, rx: 13, fill: CARD, stroke: COL.dim, 'stroke-width': 3 }, rem);
+    T(rem, 'dRP', { y: 8, size: 20, fill: COL.chalk, weight: 700, anchor: 'middle' });
+    show(rem, m('drp', -.4)); tw(rem, { y: 600, x: bx + 120, o: 0 }, m('drp', .8), 1);
+    line(p, 'второй домен снимает', 1180, 215, m('drp'), PROT, 26, 'middle', 600);
+    line(p, 'сахаро-фосфатный остаток', 1180, 250, m('drp', .1), PROT, 26, 'middle', 600);
+    pill(p, '1 нт за посадку', DNA, 1180, 380, m('one'), 34);
+  }],
+
+  ['q2', 'Быстрая проверка', () => {
+    const p = panel(0), g = pico(p, 380, 450, 'Pol γ', .6, { dy: 50, size: 38 }); show(g, .3);
+    pill(p, '?', COL.int, 380, 230, .6, 64);
+    line(p, 'что держит её на ДНК?', 380, 700, .6, COL.dim, 28, 'middle', 600);
+  }, { ask: done => quiz({ x: 780, y: 150, w: 740, cls: 'side', maxH: 600 }, [{
+    id: 'c-gam', prompt: ['Что обеспечивает процессивность полимеразы γ?'],
+    build: choice(['Зажим PCNA', 'Добавочные субъединицы Pol γB', 'β-кольцо', 'Хеликаза CMG'], 1,
+      'Добавочные субъединицы Pol γB связывают ДНК и удерживают на ней фермент.',
+      ['PCNA в митохондрию не попадает: кольца у Pol γ нет.', null, 'β-кольцо есть у бактерий.', 'CMG — ядерный комплекс, Pol γ его не использует.']),
+  }], done) }],
+
+  ['families', 'Семейства по строению', (m) => {
+    const p = panel(0), h = polymerase(p, 440, 480, .3, { s: .8, names: true, label: 'ДНК-полимераза' });
+    ['palm', 'thumb', 'fingers'].forEach((k, i) => show(h[k].lab, m('hand', .3 + i * .5), .4));
+    h.mg.forEach(a => show(a, m('hand', 2.1), .4));
+    line(p, 'ладонь · пальцы · большой палец · 2 Mg²⁺', 440, 770, m('hand', 1.8), COL.dim, 26, 'middle', 600);
+    const fx_ = [['A', 0], ['B', 1], ['Y', 2], ['X', 3], ['C', 4]], A = PROT, B = COL.chalk;
+    fx_.forEach(([f, i]) => {
+      const g = pill(p, f, i < 3 ? A : B, 1000 + (i % 3) * 170 + (i >= 3 ? 85 : 0), i < 3 ? 160 : 260, m('origin', .2 + i * .35), 40);
+    });
+    line(p, 'ладонь одного происхождения', 1085, 100, m('origin'), A, 26, 'middle', 700);
+    line(p, 'другого', 1255, 345, m('origin', 1.5), B, 26, 'middle', 700);
+    pill(p, 'конвергентное сходство', COL.int, 1250, 430, m('origin', 2), 28);
+    // B: precise δ, ε and rough ζ
+    line(p, 'внутри семейства B', 1250, 550, m('pred'), PROT, 28, 'middle', 700);
+    [['δ', 'точная', OK], ['ε', 'точная', OK], ['ζ', 'грубая', COL.int]].forEach(([n, w, c], i) => {
+      const g = pico(p, 1010 + i * 230, 660, 'Pol ' + n, .15, { dy: 26, size: 26 }); show(g, m('pred', .5 + i * .5));
+      line(p, w, 1010 + i * 230, 760, m('pred', .8 + i * .5), c, 26, 'middle', 700);
+    });
+  }],
+
+  ['tree', 'Четыре семейства', (m) => {
+    const p = panel(0), cols = [['A', 'fa', [['γ', 'митохондрии'], ['θ', 'соединение концов'], ['ν', 'репарация']]],
+      ['B', 'fb', [['α', 'затравка'], ['δ', 'отстающая'], ['ε', 'лидирующая'], ['ζ', 'достраивает при TLS']]],
+      ['X', 'fx', [['β', 'репарация'], ['λ', 'соединение концов'], ['μ', 'соединение концов'], ['TdT', 'без матрицы']]],
+      ['Y', 'fy', [['η', 'обход повреждений'], ['ι', 'обход повреждений'], ['κ', 'обход повреждений'], ['Rev1', 'обход повреждений']]]];
+    cols.forEach(([f, mark, items], c) => {
+      const cx = 210 + c * 380;
+      pill(p, 'семейство ' + f, PROT, cx, 120, m(mark, -.4), 30);
+      items.forEach(([n, task], i) => {
+        const y = 250 + i * 118, g = pico(p, cx - 120, y, null, .15); show(g, m(mark, .2 + i * .6));
+        const t = line(p, n, cx - 50, y + 4, m(mark, .2 + i * .6), COL.chalk, 32, 'start', 700); t.setAttribute('text-anchor', 'start');
+        line(p, task, cx - 50, y + 34, m(mark, .35 + i * .6), COL.dim, 22, 'start', 600);
+      });
+    });
+    colorLine(p, [['3 + 4 + 4 + 4 = '], ['15', DNA]], 520, 790, m('sum'), { size: 56 });
+    const o = G(p, { x: 1130, y: 770, o: 0 }); polymerase(o, -225, 0, null, { s: .15 });
+    const dash = mk('rect', { x: -290, y: -50, width: 580, height: 100, rx: 20, fill: 'none', stroke: COL.dim, 'stroke-width': 3, 'stroke-dasharray': '10 8' }, o);
+    T(o, 'PrimPol · семейство AEP', { x: 40, y: -2, size: 26, fill: COL.dim, weight: 700, anchor: 'middle' });
+    T(o, 'шестнадцатая — не во всех подсчётах', { x: 40, y: 30, size: 21, fill: COL.dim, weight: 500, anchor: 'middle' });
+    show(o, m('other'));
+  }],
+
+  ['odd', 'Лямбда, мю, TdT и тета', (m) => {
+    const p = panel(0), cx = [270, 800, 1330], HY = 250;
+    // λ and μ at a broken double strand
+    [['λ', cx[0] - 95], ['μ', cx[0] + 95]].forEach(([n, x], i) => { const g = pico(p, x, HY, 'Pol ' + n, .2, { dy: 30, size: 28 }); show(g, m('lm', .1 + i * .3)); });
+    [-130, 130].forEach(dx => { const e = dsIcon(p, cx[0] + dx, 540, 'old', 'old', null, { w: 190, gap: 50, sw: 9 }); put(e, { o: 0 }); show(e, m('lm', .3)); });
+    [515, 565].forEach(y => { const l = path(p, `M${cx[0] - 35} ${y}H${cx[0] + 35}`, { stroke: DNA, 'stroke-width': 9 }); put(l, { o: 0 }); show(l, m('lm', 2), .8); });
+    line(p, 'заполняют брешь между концами', cx[0], 680, m('lm', 1), COL.chalk, 26, 'middle', 600);
+    line(p, 'негомологичное соединение', cx[0], 725, m('lm', 1), COL.dim, 24, 'middle', 600);
+    // TdT: a strand that grows without a template
+    const t = pico(p, cx[1], HY, 'TdT', .2, { dy: 30, size: 28 }); show(t, m('tdt'));
+    path(p, `M${cx[1] - 240} 540H${cx[1] - 150}`, { stroke: DNA, 'stroke-width': 9 });
+    [...'GACTGCATGC'].forEach((b, i) => { const g = bead(p, cx[1] - 135 + i * 42, 540, b, 17); put(g, { o: 0 }); show(g, m('tdt', .6 + i * .3), .3); });
+    line(p, 'нет матрицы: второй цепи нет', cx[1], 640, m('tdt', 1), COL.chalk, 26, 'middle', 600);
+    line(p, 'случайные нуклеотиды на концах', cx[1], 725, m('tdt', 2.5), COL.dim, 24, 'middle', 600);
+    line(p, 'разрезанных генов антител', cx[1], 760, m('tdt', 2.6), COL.dim, 24, 'middle', 600);
+    // θ: a hand fused with a helicase domain
+    const th = pico(p, cx[2] - 60, HY, 'Pol θ', .2, { dy: 30, size: 28 }); show(th, m('th'));
+    enzyme(p, 'хеликаза', cx[2] + 120, HY, m('th', .6), { w: 140, h: 60, size: 24 });
+    const lk = path(p, `M${cx[2] + 10} ${HY}H${cx[2] + 48}`, { stroke: PROT, 'stroke-width': 8 }); put(lk, { o: 0 }); show(lk, m('th', .6));
+    line(p, 'один белок из двух доменов', cx[2], 540, m('th', 1), COL.chalk, 26, 'middle', 600);
+    line(p, 'соединяет концы', cx[2], 725, m('th', 1.5), COL.dim, 24, 'middle', 600);
+    line(p, 'по микрогомологии', cx[2], 760, m('th', 1.6), COL.dim, 24, 'middle', 600);
+  }],
+
+  ['bact', 'Сравните с бактериями', (m) => {
+    const p = panel(0), items = [['I', 'A', 'γ', 'p1'], ['II', 'B', 'α · δ · ε', 'p2'], ['IV', 'Y', 'η · ι · κ', 'p4'], ['V', 'Y', null, 'p4'], ['III', 'C', null, 'p3']];
+    line(p, 'кишечная палочка', 330, 120, .3, COL.whole, 32, 'middle', 700); line(p, 'эукариоты', 1230, 120, .3, COL.nat, 32, 'middle', 700);
+    const ys = [230, 345, 460, 575, 740];
+    items.forEach(([n, f, eu, mark], i) => {
+      const y = ys[i], g = pico(p, 250, y, null, .15); show(g, m(mark, i === 3 ? .6 : 0));
+      line(p, 'Pol ' + n, 340, y + 10, m(mark, i === 3 ? .6 : 0), COL.chalk, 32, 'start', 700);
+      const c = G(p, { x: 560, y, o: 0 }); mk('circle', { r: 26, fill: CARD, stroke: PROT, 'stroke-width': 3 }, c); T(c, f, { y: 11, size: 32, fill: PROT, weight: 700, anchor: 'middle' });
+      show(c, m(mark, i === 3 ? .6 : 0));
+      if (eu) {
+        const ey = i === 2 ? 517 : y;
+        if (i < 4) arrowTo(p, 610, y, 1000, ey, COL.dim, m(mark, .4));
+      if (i === 3) arrowTo(p, 610, y, 1000, 517, COL.dim, m(mark, .9));
+        line(p, eu, 1230, ey + 10, m(mark, .5), COL.nat, 34, 'middle', 700);
+      }
+    });
+    arrowTo(p, 610, 740, 900, 740, NO, m('p3'), true); put(crossX(p, 950, 740, .8), { o: 0 }); show(p.lastChild, m('p3', .4));
+    line(p, 'у эукариот родственников нет', 1010, 750, m('p3', .5), NO, 26, 'start', 700);
+    pill(p, 'основные репликаторы эволюционно разные', DNA, 800, 840, m('ev'), 28);
+  }],
+
+  ['groups', 'Три группы', (m) => {
+    const p = panel(0), AX = 170, yk = k => 530 - (k - 1) * 60, cx = [560, 930, 1300];
+    const SUP = ['¹', '²', '³', '⁴', '⁵', '⁶', '⁷'];
+    path(p, `M${AX} ${yk(7) - 20}V${yk(1) + 20}`, { stroke: COL.dim, 'stroke-width': 4 });
+    for (let k = 1; k <= 7; k++) {
+      path(p, `M${AX - 9} ${yk(k)}H${AX + 9}`, { stroke: COL.dim, 'stroke-width': 3 });
+      T(p, '10⁻' + SUP[k - 1], { x: AX - 22, y: yk(k) + 8, size: 24, fill: COL.dim, anchor: 'end' });
+    }
+    line(p, 'доля ошибок на нуклеотид · шкала логарифмическая', 100, 70, .3, COL.dim, 24, 'start', 600);
+    const grp = [
+      ['репликативные', 'корректура есть', 'тысячи нт · с зажимом', 'крупные · тесный центр', -5, 7, 7, 'rep', .24],
+      ['репарационные', 'корректуры нет', '1 нт или несколько', 'малые · центр подстраивается', 6, 4, 4, 'rap', .16],
+      ['транслезионные', 'корректуры нет', 'несколько нт', 'средние · просторный центр', 12, 1, 4, 'tls', .2]];
+    grp.forEach(([name, a, b, c, fr, kLo, kHi, mark, s], i) => {
+      const x = cx[i], t = m(mark);
+      line(p, name, x, 110, t, COL.chalk, 30, 'middle', 700);
+      const guide = path(p, `M${AX} ${yk(kHi)}H${x}`, { stroke: COL.dim, 'stroke-width': 2.5, 'stroke-dasharray': '8 8' }); put(guide, { o: 0 }); show(guide, t, .4);
+      if (kLo === kHi) {
+        const d = G(p, { x, y: yk(kHi), o: 0 }); mk('circle', { r: 24, fill: DNA }, d); show(d, t + .3, .4);
+        line(p, '10⁻' + SUP[kHi - 1], i ? x : x + 44, i ? yk(kHi) - 36 : yk(kHi) + 9, t + .5, DNA, 28, i ? 'middle' : 'start', 700);
+      } else {
+        const rg = strip(p, x - 28, yk(4) - 10, 56, yk(1) - yk(4) + 20, DNA, 0); show(rg, t + .3, .4);
+        line(p, '10⁻¹ … 10⁻⁴', x + 44, yk(2.5) + 9, t + .5, DNA, 28, 'start', 700);
+      }
+      const h = pico(p, x, 650, null, s); show(h, t + .5, .5);
+      put(h.pol.fingers, { r: fr });
+      [[a, 745], [b, 785], [c, 825]].forEach(([str, y], j) => line(p, str, x, y, t + 1 + j * .5, j ? COL.chalk : (i ? NO : OK), 24, 'middle', 600));
+    });
+  }],
+
+  ['why', 'Откуда 10⁻⁷', (m) => {
+    const p = panel(0), AY = 300, xk = k => 160 + (k - 1) * 1280 / 6, SUP = ['¹', '²', '³', '⁴', '⁵', '⁶', '⁷'];
+    path(p, `M160 ${AY}H1440`, { stroke: COL.dim, 'stroke-width': 4 });
+    for (let k = 1; k <= 7; k++) { path(p, `M${xk(k)} ${AY - 9}V${AY + 9}`, { stroke: COL.dim, 'stroke-width': 3 }); T(p, '10⁻' + SUP[k - 1], { x: xk(k), y: AY + 42, size: 24, fill: COL.dim, anchor: 'middle' }); }
+    line(p, 'доля ошибок на нуклеотид', 160, 160, .3, COL.dim, 24, 'start', 600);
+    const dot = (x, c, t) => { const e = G(p, { x, y: AY, o: 0 }); mk('circle', { r: 14, fill: c, stroke: COL.board, 'stroke-width': 3 }, e); show(e, t); };
+    dot(xk(5), DNA, m('sel')); line(p, 'отбор нуклеотида: 10⁻⁵', xk(5), AY - 36, m('sel'), DNA, 26, 'middle', 700);
+    arrowTo(p, xk(5) + 24, 365, xk(7) - 16, 365, OK, m('prf'));
+    pill(p, '× 100–1000', OK, (xk(5) + xk(7)) / 2, 420, m('prf', .3), 28);
+    dot(xk(7), OK, m('prf', 1)); line(p, 'с корректурой: 10⁻⁷', xk(7) + 40, AY - 36, m('prf', 1), OK, 26, 'end', 700);
+    pill(p, 'те же числа, что у Pol III · глава 8', PROT, 440, 400, m('same'), 26);
+    const ar = strip(p, xk(4), AY - 9, xk(5) - xk(4), 18, COL.int, 0); show(ar, m('alfa'));
+    line(p, 'Pol α: 10⁻⁴ – 10⁻⁵ · корректуры нет', (xk(4) + xk(5)) / 2, AY - 80, m('alfa'), COL.int, 24, 'middle', 700);
+    // tight and adjustable centres
+    const centre = (x, lab, fr, t) => {
+      const h = pico(p, x, 690, null, .38); show(h, t); put(h.pol.fingers, { r: fr });
+      bead(h.pol.in, -20, -24, 'A', 20); bead(h.pol.in, -20, 24, 'T', 20);
+      line(p, lab, x, 520, t, COL.chalk, 26, 'middle', 700);
+      return h;
+    };
+    centre(430, 'тесный: Pol δ и Pol ε', FINGERS_SHUT, m('size'));
+    centre(1010, 'подгоняемый: Pol β', 7, m('size', 2.5));
+    line(p, 'сверяет форму всей пары', 430, 860, m('size', 1), OK, 24, 'middle', 600);
+    line(p, 'отбирает так же, но корректуры нет', 1010, 860, m('size', 3), COL.dim, 24, 'middle', 600);
+    // a damaged base does not fit the tight centre
+    const lump = G(p, { x: 730, y: 690, o: 0 });
+    bead(lump, -16, 0, 'T', 20); bead(lump, 16, 0, 'T', 20); path(lump, 'M-12 0H12', { stroke: COL.chalk, 'stroke-width': 10 });
+    show(lump, m('tight'));
+    arrowTo(p, 690, 690, 620, 690, COL.dim, m('tight', .5), true); put(crossX(p, 590, 690, .8), { o: 0 }); show(p.lastChild, m('tight', 1));
+    line(p, 'повреждённое основание не помещается', 730, 600, m('tight', .5), NO, 26, 'middle', 700);
+  }],
+
+  ['errors', 'Сколько ошибок на деление', (m) => {
+    const p = panel(0), ic = dsIcon(p, 800, 150, 'old', 'old', null, { w: 1300, gap: 26, sw: 9 });
+    line(p, '≈ 6,4·10⁹ п.н. · один раунд копирования одной полимеразой', 800, 90, .3, COL.chalk, 28, 'middle', 700);
+    const lab = T(p, 'частота ошибок', { x: 350, y: 300, size: 30, fill: COL.dim, weight: 600, anchor: 'middle', o: 0 });
+    const num = G(p, { x: 350, y: 460, o: 0 }), nt = T(num, '6,4·10⁹ × ?', { size: 100, fill: DNA, weight: 700, anchor: 'middle' });
+    show(lab, .6); show(num, .6);
+    line(p, 'ошибок на деление', 350, 540, .6, COL.chalk, 30, 'middle', 600);
+    const rows = [['β: 10⁻⁴', 'b', '640 000', 640000, 'β: 10⁻⁴'], ['δ, ε, только отбор: 10⁻⁵', 'sel', '64 000', 64000, 'отбор: 10⁻⁵'], ['+ корректура: 10⁻⁷', 'prf', '640', 640, 'корректура: 10⁻⁷'],
+      ['+ репарация ×100', 'm1', '6,4', 6.4, 'и репарация ×100'], ['+ репарация ×1000', 'm2', '0,64', .64, 'и репарация ×1000']];
+    rows.forEach(([name, mark, val, v, short], i) => {
+      const y = 280 + i * 95, w = (Math.log10(v) + .5) * 50, t = m(mark);
+      line(p, name, 700, y + 9, t, COL.chalk, 26, 'start', 600);
+      const b = strip(p, 1010, y - 16, 4, 32, i < 3 ? DNA : OK, 0); show(b, t, .3);
+      prog(q => b.setAttribute('width', (4 + (w - 4) * q).toFixed(1)), t, .8, io);
+      line(p, val, 1010 + w + 20, y + 9, t + .5, i < 3 ? DNA : OK, 30, 'start', 700);
+      swap(lab, short, t); swap(nt, val, t); pulse(num, t, 1.12);
+    });
+    vBracket(p, 1520, 280 + 3 * 95 - 36, 280 + 4 * 95 + 36, 'реально', OK, m('real'), { right: false, size: 26 });
+    pill(p, 'реальные оценки: от долей единицы до единиц', OK, 960, 790, m('real'), 28);
+  }],
+
+  ['errlimit', 'Во сколько раз', (m) => {
+    const p = panel(0), ys = [250, 430, 610], vals = ['640 000', '640', '6,4'], labs = ['β', 'δ, ε с корректурой', '+ репарация ×100'];
+    vals.forEach((v, i) => { line(p, v, 480, ys[i] + 18, .4 + i * .15, i ? DNA : COL.chalk, 66, 'end', 700); line(p, labs[i], 520, ys[i] + 12, .4 + i * .15, COL.dim, 26, 'start', 600); });
+    arrowTo(p, 330, ys[0] + 60, 330, ys[1] - 55, COL.int, m('r1')); arrowTo(p, 110, ys[0] + 60, 110, ys[2] - 55, COL.int, m('r2'));
+    line(p, '÷ 1000', 345, (ys[0] + ys[1]) / 2 + 12, m('r1'), COL.int, 26, 'start', 700);
+    line(p, '÷ 100 000', 125, (ys[0] + ys[2]) / 2 + 12, m('r2'), COL.int, 26, 'start', 700);
+    colorLine(p, [['640 000 / 640 = '], ['1000', COL.int]], 1180, 330, m('r1'), { size: 46 });
+    line(p, 'разница от корректуры', 1180, 380, m('r1', .5), COL.dim, 26, 'middle', 600);
+    colorLine(p, [['640 000 / 6,4 = '], ['100 000', COL.int]], 1180, 520, m('r2'), { size: 46 });
+    line(p, 'с репарацией неспаренных оснований', 1180, 570, m('r2', .5), COL.dim, 26, 'middle', 600);
+    const ic = dsIcon(p, 800, 790, 'old', 'old', null, { w: 1100, gap: 26, sw: 9 }); put(ic, { o: 0 }); show(ic, m('beta'));
+    const b = pico(p, 800, 710, null, .13); show(b, m('beta', .5)); pulse(b, m('beta', .5), 1.3);
+    line(p, 'Pol β: один нуклеотид за акт репарации', 800, 860, m('beta', .8), PROT, 26, 'middle', 700);
+  }],
+
+  ['pole', 'POLE и корректура', (m) => {
+    const p = panel(0), x0 = 300, x1 = 1300, y = 210;
+    const gb = strip(p, x0, y, x1 - x0, 50, DNA, 0); gb.setAttribute('fill-opacity', .3); show(gb, .3);
+    const ex = strip(p, x0, y, 300, 50, DNA, 0); show(ex, .3);
+    line(p, 'ген POLE', 800, 150, m('gene'), COL.chalk, 34, 'middle', 700);
+    line(p, 'экзонуклеазный домен', x0 + 150, y + 90, m('gene', .6), DNA, 24, 'middle', 700);
+    const mark = G(p, { x: x0 + 150, y, o: 0 }); path(mark, 'M0 -8L0 58', { stroke: COL.int, 'stroke-width': 7 }); mk('circle', { cy: -14, r: 12, fill: COL.int }, mark);
+    show(mark, m('gene', 1.4)); line(p, 'замена', x0 + 150, y - 38, m('gene', 1.4), COL.int, 26, 'middle', 700);
+    const h = polymerase(p, 440, 620, .3, { s: .5, exo3: true }); line(p, 'Pol ε', 440, 480, .3, COL.chalk, 36, 'middle', 700);
+    tw(h.exo, { o: .35 }, m('eff'), .6); pulse(h.exo, m("eff"), 1.15);
+    pill(p, 'полимеразная активность цела', OK, 1100, 470, m('eff'), 28);
+    pill(p, 'корректура ослаблена', NO, 1100, 540, m('eff', 1), 28);
+    line(p, 'мутаций в опухоли', 890, 650, m('eff', 2), COL.chalk, 26, 'start', 700);
+    [['обычная', 6, COL.chalk, 705], ['с заменой в POLE', 600, NO, 765]].forEach(([s, w, c, yy], i) => {
+      line(p, s, 870, yy + 9, m('eff', 2.4 + i * .5), COL.chalk, 24, 'end', 600);
+      const b = strip(p, 890, yy - 14, 6, 28, c, 0); show(b, m('eff', 2.4 + i * .5), .3); prog(q => b.setAttribute('width', (6 + (w - 6) * q).toFixed(1)), m('eff', 2.4 + i * .5), 1, io);
+    });
+    pill(p, '≈ ×100', COL.int, 1400, 820, m('eff', 4), 30);
+  }],
+
+  ['dimer', 'Тиминовый димер', (m) => {
+    const p = panel(0), y = 620, sd = strand(p, 'GCTTAGC', 450, y, .3, { dx: 100 });
+    const u2 = sd.units[2], u3 = sd.units[3], bx = sd.xAt(2), bx3 = sd.xAt(3), by = y - 70;
+    [0, 1, 2].forEach(k => { const x = 640 + k * 55, z = path(p, `M${x} 300L${x - 12} 370L${x + 12} 410L${x} 485`, { stroke: COL.int, 'stroke-width': 6, 'stroke-linejoin': 'round' }); put(z, { o: 0 }); show(z, m('uv', k * .15), .25); hide(z, m('uv', 1.4), .5); });
+    const uvp = pill(p, 'ультрафиолет', COL.int, 900, 330, m('uv'), 28); hide(uvp, m('bond', -.2), .4);
+    tw(u2.bead, { x: 15, y: -62 }, m('uv', 1.4), .7); tw(u3.bead, { x: -15, y: -62 }, m('uv', 1.4), .7);
+    const lk = path(p, `M${bx + 30} ${by + 8}H${bx3 - 30}`, { stroke: COL.chalk, 'stroke-width': 11 }); put(lk, { o: 0 }); show(lk, m('uv', 1.9), .3);
+    const l1 = pill(p, 'каждый T может спариться с A', OK, 410, 420, m('bond'), 26), l2 = pill(p, 'жёсткая связка — цепь изогнута', COL.int, 1010, 420, m('bond', 1.8), 26);
+    hide(l1, m('stop', -.2), .3); hide(l2, m('stop', -.2), .3);
+    const d = pico(p, 190, 290, 'Pol δ', .3, { dy: 34 }); show(d, m('stop', -.8)); tw(d, { x: 480 }, m('stop', -.6), 1.4);
+    pill(p, 'стоп', NO, 690, 300, m('stop', 1.2), 36);
+    pill(p, 'тесный центр: сдвоенное основание не входит', NO, 800, 150, m('stop', 1.8), 26);
+    pill(p, 'остановка вилки: гибель клетки или разрыв цепи', NO, 800, 735, m('risk'), 28);
+    pill(p, 'лучше риск мутации, чем остановка', COL.int, 800, 805, m('risk', 3), 28);
+    ['η', 'ι', 'κ', 'Rev1'].forEach((n, i) => {
+      const g = pico(p, 1010 + i * 130, 290, n, .12, { dy: 24, size: 24 }); show(g, m('noprf', i * .3));
+      yesNo(p, false, 1010 + i * 130, 400, m('noprf', 1 + i * .3), 1.1);
+    });
+    line(p, 'корректуры нет', 1190, 460, m('noprf', 1.2), NO, 26, 'middle', 700);
+    line(p, 'проход нередко даёт ошибку', 1190, 500, m('noprf', 1.6), COL.dim, 24, 'middle', 600);
+  }],
+
+  ['eta', 'Pol η', (m) => {
+    const p = panel(0), HX = 470, HY = 480, h = polymerase(p, HX, HY, m('eta'), { s: .9 });
+    put(h.fingers, { r: 4 });
+    show(T(p, 'Pol η', { x: HX, y: HY - 202 * .9 - 24, size: 40, weight: 700, anchor: 'middle', o: 0 }), m('eta'));
+    const bx = [-32, 32];
+    path(h.in, 'M-32 26H32', { stroke: COL.chalk, 'stroke-width': 12 });
+    bx.forEach(x => bead(h.in, x, 26, 'T', 22));
+    line(p, 'просторный центр: вмещает оба сшитых T', HX, 760, m('eta', 1), COL.chalk, 26, 'middle', 700);
+    const aa = bx.map(x => put(bead(h.in, x, -170, 'A', 22), { o: 0 }));
+    aa.forEach((a, i) => { tw(a, { o: 1 }, m('aa', i * .4), .3); tw(a, { y: -26 }, m('aa', i * .4), 1); });
+    pill(p, 'два A — правильные основания', OK, HX, 815, m('aa', 1.6), 28);
+    const dd = pico(p, 1240, 190, 'Pol δ', .2, { dy: 30 }); show(dd, m('eta', 3));
+    line(p, 'тесный центр', 1240, 310, m('eta', 3), COL.dim, 24, 'middle', 600);
+    line(p, 'точна там, под что устроена', 1240, 360, m('spec'), OK, 24, 'middle', 700);
+    ['T–T-димер', 'окисленный G', 'GG-цисплатин'].forEach((s, i) => pill(p, s, OK, 1240, 420 + i * 68, m('spec', .6 + i * .8), 26));
+    const free = G(p, { x: 1240, y: 700, o: 0 });
+    bead(free, 0, 24, 'C', 20); bead(free, 0, -24, 'A', 20);
+    mk('circle', { cx: 0, cy: -24, r: 30, fill: 'none', stroke: NO, 'stroke-width': 5 }, free);
+    show(free, m('free'));
+    pill(p, 'на чистой ДНК ≈ 10⁻²', NO, 1240, 790, m('free', .5), 28);
+    line(p, 'зовут только к месту повреждения', 1240, 845, m('free', 2), COL.chalk, 24, 'middle', 600);
+  }],
+
+  ['xpv', 'Пигментная ксеродерма', (m) => {
+    const p = panel(0);
+    const gb = strip(p, 300, 120, 1000, 50, PROT, 0); gb.setAttribute('fill-opacity', .3); show(gb, .3);
+    line(p, 'ген POLH · Pol η', 800, 155, m('gene'), COL.chalk, 32, 'middle', 700);
+    const mk_ = G(p, { x: 560, y: 120, o: 0 }); path(mk_, 'M0 -8L0 58', { stroke: COL.int, 'stroke-width': 7 }); show(mk_, m('gene', .6));
+    pill(p, 'вариантная ксеродерма', COL.int, 800, 235, m('gene', 1), 28);
+    [['репарация димеров вырезанием', true, 330], ['репликация через димер', false, 430]].forEach(([s, ok, y], i) => {
+      line(p, s, 330, y + 10, m('rep', i * 2.2), COL.chalk, 32, 'start', 600); yesNo(p, ok, 1020, y, m('rep', 1 + i * 2.2), 1.4);
+      line(p, ok ? 'работает' : 'не работает', 1080, y + 10, m('rep', 1 + i * 2.2), ok ? OK : NO, 30, 'start', 700);
+    });
+    // the sun and the mutations
+    const sun = G(p, { x: 250, y: 660, o: 0 }); mk('circle', { r: 46, fill: COL.int }, sun);
+    for (let a = 0; a < 360; a += 30) path(sun, `M${60 * Math.cos(rad(a))} ${60 * Math.sin(rad(a))}L${84 * Math.cos(rad(a))} ${84 * Math.sin(rad(a))}`, { stroke: COL.int, 'stroke-width': 6 });
+    show(sun, m('sun'));
+    const ic = dsIcon(p, 900, 690, 'old', 'old', null, { w: 800, gap: 40, sw: 9 }); put(ic, { o: 0 }); show(ic, m('sun'));
+    [0, 1, 2, 3, 4, 5].forEach(i => { const x = 590 + i * 120, t = G(p, { x, y: 690, o: 0 }); bead(t, -14, -42, 'T', 13); bead(t, 14, -42, 'T', 13); path(t, 'M-14 -42H14', { stroke: COL.chalk, 'stroke-width': 7 }); show(t, m('sun', .6 + i * .6), .3); });
+    pill(p, 'мутации накапливаются', NO, 700, 800, m('sun', 3), 28);
+    pill(p, 'риск рака кожи ↑', COL.int, 1120, 800, m('sun', 4.5), 28);
+  }],
+
+  ['team', 'Остальные участники', (m) => {
+    const p = panel(0);
+    infoCard(p, 70, 90, 470, 'Pol ι · Pol κ', ['проходят другие', 'повреждения', 'κ продолжает от', 'неправильной пары'], PROT, m('ik'), .4);
+    infoCard(p, 565, 90, 470, 'Rev1', ['вставляет только C: напротив G', 'и пустого места', 'каркас: к его концу садятся', 'другие; BRCT тянется к PCNA'], PROT, m('rev'), .5);
+    infoCard(p, 1060, 90, 470, 'Pol ζ', ['почти не вставляет', 'напротив повреждения', 'зато достраивает цепь', 'от искажённой пары'], PROT, m('zeta'), .4);
+    [['η · ι · κ вставляет', 300], ['ζ продолжает', 800], ['δ / ε возвращается', 1300]].forEach(([s, x], i) => {
+      pill(p, s, i === 1 ? COL.int : PROT, x, 560, m('two', i * 1.4), 30);
+      if (i) arrowTo(p, x - 370, 560, x - 160, 560, COL.dim, m('two', i * 1.4 - .2));
+    });
+    line(p, 'обычная схема из двух шагов', 800, 490, m('two'), COL.dim, 26, 'middle', 600);
+    const tl = path(p, 'M240 730H1360', { stroke: COL.chalk, 'stroke-width': 8 }); put(tl, { o: 0 }); show(tl, m('low'));
+    const er = strip(p, 760, 716, 80, 28, NO, 0); show(er, m('low', 1));
+    line(p, 'короткий участок ошибок', 800, 695, m('low', 1), NO, 24, 'middle', 700);
+    pill(p, 'низкая процессивность — это плюс', OK, 800, 815, m('low', 2), 28);
+  }],
+
+  ['signal', 'Сигнал от PCNA', (m) => {
+    const p = panel(0), sc = sigBase(p, { cmg: 930 });
+    line(p, 'PCNA', 500, 375, .4, PROT, 28, 'middle', 700);
+    tw(sc.ahead, { x: 1260 }, m('s1'), 1.4); tw(sc.hel, { x: 1260 }, m('s1'), 1.4);
+    sc.rpa.forEach((r, i) => show(r, m('s1', 1.4 + i * .25), .3));
+    pill(p, 'δ или ε упирается в димер', NO, 700, 690, m('s1'), 26);
+    pill(p, 'одиночная цепь под RPA', COL.chalk, 1050, 640, m('s1', 2.2), 26);
+    const r18 = enzyme(p, 'RAD18', 960, 380, m('s2'), { w: 130, h: 50, size: 22 }), r6 = enzyme(p, 'RAD6', 1100, 380, m('s2', .3), { w: 110, h: 50, size: 22 });
+    tw(r18, { y: 458 }, m('s2', .6), .7); tw(r6, { y: 458 }, m('s2', .9), .7);
+    tw(r18, { x: 390, y: 360 }, m('s3'), 1); tw(r6, { x: 610, y: 360 }, m('s3'), 1);
+    const ub = ubi(p, 500, 425, 20); put(ub, { o: 0, s: .5 }); pop(ub, m('s3', 1.2));
+    line(p, 'K164', 540, 432, m('s3', 1.4), COL.int, 26, 'start', 700);
+    hide(r18, m('s3', 2.4), .5); hide(r6, m('s3', 2.4), .5);
+    pill(p, 'моноубиквитин: одна молекула, без цепочки', COL.int, 800, 270, m('s3', 1.6), 26);
+  }],
+
+  ['pass', 'Проход через димер', (m) => {
+    const p = panel(0), sc = sigBase(p, { cmg: 1260, rpa: true, ub: true });
+    const tls = pico(p, 330, 260, 'TLS-полимераза', .3, { dy: 34, size: 24 }); show(tls, m('s4'));
+    const l1 = path(p, 'M320 325L486 490', { stroke: PROT, 'stroke-width': 5 }), l2 = path(p, 'M372 325L490 440', { stroke: COL.int, 'stroke-width': 5 });
+    [l1, l2].forEach((l, i) => { put(l, { o: 0 }); show(l, m('s4', .8 + i * .8), .4); });
+    const t1 = line(p, 'PIP-бокс → PCNA', 230, 440, m('s4', .8), PROT, 24, 'middle', 700), t2 = line(p, 'UBZ / UBM → убиквитин', 545, 392, m('s4', 1.6), COL.int, 24, 'start', 700);
+    tw(sc.dl, { x: 950, y: RY - 190, o: .35 }, m('s4', 2.4), .8);
+    // s5: η passes the dimer
+    [l1, l2, t1, t2].forEach(l => hide(l, m('s5'), .4));
+    tw(tls, { x: 690, y: RY }, m('s5'), 1.2); hide(tls.cap, m('s5'), .3);
+    tw(tls, { x: 880 }, m('s5', 1.6), 1.6);
+    const ext = path(p, `M655 ${NY}H940`, { stroke: DNA, 'stroke-width': 8 }, { d: 0 }); draw(ext, m('s5', 1.4), 1.8);
+    [840, 880].forEach((x, i) => { const a = bead(p, x, NY, 'A', 13); put(a, { o: 0 }); show(a, m('s5', 2 + i * .4), .3); });
+    sc.rpa.forEach(r => hide(r, m('s5', 1), .4));
+    const us = enzyme(p, 'USP1', 800, 330, m('s5', 3.4), { w: 120, h: 50, size: 22 });
+    tw(us, { x: 590, y: 385 }, m('s5', 3.8), .8); hide(sc.ub, m('s5', 4.8), .4); hide(sc.k164, m('s5', 4.8), .4); hide(us, m('s5', 5.2), .4);
+    hide(tls, m('s5', 4.6), .6);
+    tw(sc.dl, { x: 1010, y: RY, o: 1 }, m('s5', 5.2), 1);
+    pill(p, 'USP1 снимает метку', COL.int, 800, 760, m('s5', 3.6), 26);
+  }],
+
+  ['gate', 'Метка только там, где остановка', (m) => {
+    const p = panel(0);
+    pcnaStrand(p, { x0: 100, tx1: 740, nx1: 520, ringX: 260 });
+    const d = pico(p, 560, RY, 'Pol δ', .36, { dy: 34 }); show(d, .3);
+    line(p, 'PCNA без метки', 260, 380, m('ok'), PROT, 28, 'middle', 700);
+    tw(d, { x: 640 }, m('ok'), 3);
+    [['η', 260], ['ι', 420]].forEach(([n, x], i) => {
+      const g = pico(p, x, 230, n, .14, { dy: 24, size: 24 }); show(g, m('ok', .6 + i * .3)); tw(g, { y: 110, o: 0 }, m('ok', 2 + i * .3), 1);
+    });
+    pill(p, 'гладкая репликация: TLS не задерживаются', OK, 430, 700, m('ok', 1), 26);
+    pcnaStrand(p, { x0: 860, tx1: 1500, nx1: 1280, ringX: 1000 });
+    const CH = [[1000, 425], [1050, 380], [1100, 335], [1150, 290]];
+    CH.forEach(([x, y], i) => {
+      if (i) { const l = path(p, `M${CH[i - 1][0]} ${CH[i - 1][1]}L${x} ${y}`, { stroke: COL.int, 'stroke-width': 5 }); put(l, { o: 0 }); show(l, m('k63', i * .5), .4); }
+      const u = ubi(p, x, y, 20); put(u, { o: 0 }); show(u, m('k63', i * .5), .4);
+    });
+    pill(p, 'цепочка по K63', COL.int, 1330, 300, m('k63', 2), 26);
+    arrowTo(p, 1180, 600, 1180, 640, COL.dim, m('k63', 2.8));
+    pill(p, 'переключение матрицы: не разбираем', COL.dim, 1180, 700, m('k63', 3), 26);
+  }],
+
+  ['q3', 'Быстрая проверка', () => {
+    const p = panel(0), r = betaRing(p, 600, 340, .3, { s: .7 });
+    line(p, 'PCNA', 600, 352, .3, PROT, 40, 'middle', 700);
+    const u = ubi(p, 1050, 340, 34); put(u, { o: 0 }); show(u, .5);
+    line(p, 'метка убиквитина', 1050, 420, .5, COL.int, 28, 'middle', 700);
+    arrowTo(p, 990, 340, 830, 340, COL.int, .8, true); pill(p, '?', COL.int, 900, 290, .9, 40);
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-k164', prompt: ['На какой остаток PCNA ставят метку убиквитина?'],
+    build: choice(['Лизин K63', 'Лизин K164', 'Саму ДНК-матрицу'], 1,
+      'Лизин K164: к нему присоединяют одну молекулу убиквитина.',
+      ['K63 — связь в цепочке убиквитинов, которая достраивается позже на уже меченом K164.', null, 'Метку получает белок, а не ДНК.']),
+  }], done) }],
+
+  ['wrap', 'Итоги', (m) => {
+    numbered(panel(0), [
+      ['15 полимераз в 4 семействах; геном копируют α, δ и ε', 'w1'],
+      ['точность подобрана под задачу: 10⁻⁷, 10⁻⁴ и ещё хуже', 'w2'],
+      ['на деление: 640 000 → 640 → единицы ошибок', 'w3'],
+      ['повреждение: Ub на K164, η ставит AA, USP1 снимает метку', 'w4'],
+    ], m, 220, 150, 34);
+  }],
+
+  ['final1', 'Практика главы', () => { panel(0); }, { ask: done => quiz(SCREEN, [{ id: 'p-num', prompt: ['Впишите числа.'], build: blanks(P_NUM) }], done, 'Практика главы   1 из 5') }],
+  ['final2', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{ id: 'p-tf', prompt: ['Верно или неверно?'], build: grid(P_TF, TF, { multi: false, text: true }) }], done, 'Практика главы   2 из 5') }],
+  ['final3', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{ id: 'p-fam', prompt: ['К какому семейству относится полимераза?'], build: grid(P_FAM, FCOLS, { multi: false, text: true }) }], done, 'Практика главы   3 из 5') }],
+  ['final4', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{ id: 'p-grp', prompt: ['Три группы полимераз. Отнесите свойства к своей группе.'], build: grid(P_GRP, GCOLS, { multi: false, text: true }) }], done, 'Практика главы   4 из 5') }],
+  ['final5', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{ id: 'p-ord', prompt: ['Расставьте шаги переключения на транслезионную полимеразу по порядку.'], build: grid(P_ORD, NCOLS, { multi: false, text: true }) }], done, 'Практика главы   5 из 5') }],
+  ['finish', 'Готово', () => {}, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+/* ---------- the signal scene shared by signal and pass ---------- */
+function sigBase(p, { cmg = 930, rpa = false, ub = false }) {
+  const { ring } = pcnaStrand(p);
+  const ahead = G(p, { x: cmg });
+  path(ahead, `M0 ${TY + 44}H700`, { stroke: COL.chalk, 'stroke-width': 8 });
+  for (let x = 20; x < 700; x += 22) path(ahead, `M${x} ${TY + 4}V${TY + 40}`, { stroke: COL.dim, 'stroke-width': 2.5 });
+  const hel = enzyme(p, 'CMG', cmg, TY + 22, null, { w: 84, h: 110, size: 22 }); put(hel, { o: 1 });
+  // the template dimer
+  path(p, `M840 ${TY}H880`, { stroke: COL.chalk, 'stroke-width': 14 });
+  bead(p, 840, TY, 'T', 15); bead(p, 880, TY, 'T', 15);
+  const dl = pico(p, 690, RY, 'Pol δ', .36, { dy: 34 }); put(dl, { o: 1 });
+  const rp = [0, 1, 2, 3].map(i => { const r = enzyme(p, 'RPA', 950 + i * 70, TY, null, { w: 66, h: 34, size: 18 }); put(r, { o: rpa ? 1 : 0 }); return r; });
+  const u = ubi(p, 500, 425, 20); put(u, { o: ub ? 1 : 0 });
+  const k164 = T(p, 'K164', { x: 540, y: 432, size: 26, fill: COL.int, weight: 700, o: ub ? 1 : 0 });
+  return { ahead, hel, rpa: rp, dl, ub: u, k164, ring };
+}
+
+/* ---------- question data ---------- */
+const P_NUM = [
+  { parts: ['6,4·10⁹ нт × 10⁻⁴ = ', { box: '640000' }, ' ошибок на деление'], why: '6,4·10⁹ · 10⁻⁴ = 640 000.', hint: 'Умножьте число нуклеотидов на частоту ошибок.' },
+  { parts: ['6,4·10⁹ нт × 10⁻⁵ = ', { box: '64000' }], why: '6,4·10⁹ · 10⁻⁵ = 64 000.', hint: 'Частота в десять раз меньше, чем у β.' },
+  { parts: ['6,4·10⁹ нт × 10⁻⁷ = ', { box: '640' }], why: '6,4·10⁹ · 10⁻⁷ = 640.', hint: 'Это расчёт для δ и ε с корректурой.' },
+  { parts: ['640 000 / 640 = ', { box: '1000' }, ' раз: выигрыш от корректуры'], why: '640 000 / 640 = 1000.', hint: 'Разделите первую строку на третью.' },
+  { parts: ['640 000 / 6,4 = ', { box: '100000' }, ' раз: с репарацией неспаренных оснований'], why: '640 000 / 6,4 = 100 000.', hint: 'Разделите первую строку на строку с репарацией ×100.' },
+  { parts: ['Полимераз человека: 3 + 4 + 4 + 4 = ', { box: '15' }], why: 'Семейство A — 3, B — 4, X — 4, Y — 4: всего 15.', hint: 'Сложите числа по семействам.' },
+];
+const P_TF = [
+  { parts: ['У Pol γ есть кольцевой зажим, как у Pol δ.'], ans: ['f'], why: 'Кольца у неё нет: процессивность дают добавочные субъединицы Pol γB.' },
+  { parts: ['У Pol α есть корректура.'], ans: ['f'], why: 'Экзонуклеазного центра у Pol α нет, потому её участок затем заменяют.' },
+  { parts: ['Pol ε ведёт лидирующую цепь (хотя детали обсуждаются).'], ans: ['t'], why: 'Так показали опыты на дрожжах, но другие данные допускают участие δ.' },
+  { parts: ['Pol β реплицирует ядерный геном.'], ans: ['f'], why: 'Она вставляет один нуклеотид за акт репарации.' },
+  { parts: ['Напротив T–T-димера Pol η вставляет два A.'], ans: ['t'], why: 'Это правильные основания: димер проходится без ошибки.' },
+  { parts: ['У TLS-полимераз есть корректура.'], ans: ['f'], why: 'Корректуры у них нет, поэтому проход нередко даёт ошибку.' },
+  { parts: ['На K164 PCNA строится цепочка из нескольких убиквитинов.'], ans: ['f'], why: 'Это моноубиквитинирование: одна молекула.' },
+  { parts: ['Pol III бактерий относится к семейству C, у эукариот родственников нет.'], ans: ['t'], why: 'Основные репликаторы бактерий и эукариот эволюционно разные.' },
+];
+const FCOLS = [['a', 'A', null, '1'], ['b', 'B', null, '2'], ['x', 'X', null, '3'], ['y', 'Y', null, '4']];
+const P_FAM = [['η', 'y'], ['α', 'b'], ['λ', 'x'], ['γ', 'a'], ['ε', 'b'], ['ι', 'y'], ['β', 'x'], ['ν', 'a'], ['ζ', 'b'], ['μ', 'x'], ['θ', 'a'], ['κ', 'y'], ['δ', 'b'], ['TdT', 'x'], ['Rev1', 'y']]
+  .map(([n, f]) => ({ parts: ['Pol ' + n], ans: [f], why: `Pol ${n}: семейство ${f.toUpperCase()}.` }));
+const GCOLS = [['r', 'репликативные', null, '1'], ['p', 'репарационные', null, '2'], ['t', 'TLS', null, '3']];
+const P_GRP = [['Тесный центр, нужна идеальная пара', 'r'], ['Центр подстраивается под брешь', 'p'], ['Просторный центр, принимает искажённые пары', 't'], ['Ошибка ≈ 10⁻⁷, корректура есть', 'r'],
+  ['Ошибка ≈ 10⁻⁴, корректуры нет, один нуклеотид за посадку', 'p'], ['Вставляет нуклеотиды напротив повреждения', 't'], ['Тысячи нуклеотидов с зажимом', 'r'], ['Pol η, ι, κ, Rev1', 't']]
+  .map(([s, a]) => ({ parts: [s], ans: [a], why: a === 'r' ? 'Это репликативные: δ и ε.' : a === 'p' ? 'Это репарационные: β, λ, μ.' : 'Это транслезионные полимеразы.' }));
+const NCOLS = [1, 2, 3, 4, 5, 6].map(i => [String(i), `${i}-й`, null, String(i)]);
+const P_ORD = [
+  { parts: ['Моноубиквитин на K164 PCNA'], ans: ['3'], why: 'RAD6–RAD18 метят PCNA одной молекулой убиквитина.' },
+  { parts: ['Pol δ/ε упирается в димер, одиночная цепь покрыта RPA'], ans: ['1'], why: 'С остановки полимеразы начинается сигнал.' },
+  { parts: ['Pol η проходит димер: вставляет AA'], ans: ['5'], why: 'η вставляет правильные A напротив T–T.' },
+  { parts: ['RAD6–RAD18 садятся на RPA-цепь'], ans: ['2'], why: 'Лигаза садится на покрытую RPA цепь.' },
+  { parts: ['USP1 снимает метку, возвращается Pol δ/ε'], ans: ['6'], why: 'Метка снимается, репликативная полимераза возвращается.' },
+  { parts: ['TLS-полимераза садится: PIP-бокс + UBZ/UBM'], ans: ['4'], why: 'Двойной контакт даёт ей преимущество перед δ и ε.' },
+];
+boot();
+</script>
+</body>
+</html>

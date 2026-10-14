@@ -65,6 +65,15 @@
         ],
         "createdAt": "2026-10-15T12:00:00.000Z",
         "reason": "user confirmed 2026-10-14: keep card side accent as is"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "ch13/index.html"
+        ],
+        "createdAt": "2026-10-15T13:00:00.000Z",
+        "reason": "user confirmed 2026-10-14: keep card side accent as is"
       }
     ]
   }
