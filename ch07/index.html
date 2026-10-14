@@ -17,26 +17,12 @@
 const CHAPTER = { number: 7, title: 'Репликативная вилка', minutes: 13, language: 'ru', next: '../ch08/' };
 
 /* ---------- chapter drawing helpers (shared ones: lib/bio.js) ---------- */
-const rad = a => a * Math.PI / 180;
-// A point on a circle: angles in degrees, clockwise from the top.
-const ringPt = (cx, cy, r, a) => [cx + r * Math.sin(rad(a)), cy - r * Math.cos(rad(a))];
-// Polyline along a ring from angle a0 to a1; the radius may depend on the angle (rf).
-function arcD(cx, cy, a0, a1, rf) {
-  const k = Math.max(2, Math.ceil(Math.abs(a1 - a0) / 3));
-  let d = '';
-  for (let i = 0; i <= k; i++) {
-    const a = a0 + (a1 - a0) * i / k, [x, y] = ringPt(cx, cy, rf(a), a);
-    d += `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
-  }
-  return d;
-}
 // Piecewise-linear value of t over [[t, v], …].
 function pw(t, pts) {
   if (t <= pts[0][0]) return pts[0][1];
   for (let i = 1; i < pts.length; i++) if (t <= pts[i][0]) return pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * (t - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0] || 1);
   return pts[pts.length - 1][1];
 }
-const clamp01 = v => Math.max(0, Math.min(1, v));
 const strike = (p, x1, x2, y, t0) => draw(path(p, `M${x1} ${y}H${x2}`, { stroke: NO, 'stroke-width': 5 }, { d: 0 }), t0, .4);
 const NB = ' ';
 const RC = [520, 490], RR = 200;   // centre and radius of the ring scenes
@@ -54,38 +40,6 @@ function counterAt(p, x, y, t0, unit, { size = 110, fill = DNA } = {}) {
   show(e, t0);
   say(p, unit, x + 24, y, t0, { size: 30, fill: COL.dim, anchor: 'start', weight: 600 });
   return e;
-}
-// A circular chromosome with a replication bubble. phi (degrees, from the origin at the top) is how far each fork has gone;
-// two: both ways (θ) or one (the eye of a single fork). .set(phi) redraws. Parental strands chalk, new strands amber,
-// forks yellow dots.
-function bubble(p, cx, cy, R, t0, { two = true, sep = 22, gap = 5 } = {}) {
-  const g = G(p, { o: t0 == null ? 1 : 0 }), L = G(g), F = G(g);
-  const seg = (a0, a1, rf, c) => path(L, arcD(cx, cy, a0, a1, rf), { stroke: c, 'stroke-width': 7, 'stroke-linejoin': 'round' });
-  g.set = phi => {
-    L.replaceChildren(); F.replaceChildren();
-    const ramp = Math.max(1, Math.min(22, phi / 2)), env = a => clamp01(Math.min(a / ramp, (phi - a) / ramp));
-    const u1 = two ? 360 - phi : 360;
-    if (u1 - phi > 1) [-gap, gap].forEach(s => seg(phi, u1, () => R + s, COL.chalk));
-    if (phi >= 1) [1, -1].slice(0, two ? 2 : 1).forEach(sd => {
-      const rf = k => a => R + k * sep * env(Math.abs(a));
-      seg(0, sd * phi, a => rf(1)(a) + gap, COL.chalk); seg(0, sd * phi, a => rf(1)(a) - gap, DNA);
-      seg(0, sd * phi, a => rf(-1)(a) + gap, DNA); seg(0, sd * phi, a => rf(-1)(a) - gap, COL.chalk);
-      const [x, y] = ringPt(cx, cy, R, sd * phi);
-      mk('circle', { cx: x, cy: y, r: 11, fill: COL.int, stroke: COL.board, 'stroke-width': 3 }, F);
-    });
-  };
-  g.set(0);
-  if (t0 != null) show(g, t0);
-  return g;
-}
-// The origin mark above a ring.
-function oriMark(p, cx, cy, R, t0, str) {
-  const [x, y] = ringPt(cx, cy, R, 0);
-  const d = G(p, { o: 0 });
-  mk('circle', { cx: x, cy: y, r: 9, fill: COL.int }, d);
-  T(d, str, { x, y: y - 36, size: 28, fill: COL.int, weight: 700, anchor: 'middle' });
-  show(d, t0);
-  return d;
 }
 function dblRing(p, x, y, r, t0) {
   const g = G(p, { x, y, o: 0 });
@@ -231,7 +185,7 @@ const BEATS = [
     const dur = tCut - .3 - tTurn;
     prog(q => {
       const t = tTurn + q * dur, a = alpha(t), len = U * a / 360, e2 = Math.min(len, clamp01((t - tSec) / 3) * U);
-      arcNew.setAttribute('d', a > 0 ? arcD(cx, cy, 0, Math.min(a, 360), () => R - 16) : '');
+      arcNew.setAttribute('d', a > 0 ? arcPoly(cx, cy, 0, Math.min(a, 360), () => R - 16) : '');
       tailA.setAttribute('d', len > 0 ? `M${cx} ${tY}H${cx + Math.min(len, U)}` : '');
       tailB.setAttribute('d', len > U ? `M${cx + U} ${tY}H${cx + len}` : '');
       sec.setAttribute('d', e2 > 1 ? `M${cx} ${tY + 17}H${cx + e2}` : '');
@@ -267,7 +221,7 @@ const BEATS = [
     const p = panel(0), cx = 520, cy = 500, R = 175, aH = -35, aL = 205, B = 50;
     pill(p, 'D-петля: митохондрии млекопитающих', DNA, 800, 90, .3, 32);
     mk('circle', { cx, cy, r: R - 8, fill: 'none', stroke: COL.chalk, 'stroke-width': 7 }, p);
-    const outer = path(p, arcD(cx, cy, aH, aH + 360, () => R + 8), { stroke: COL.chalk, 'stroke-width': 7 }),
+    const outer = path(p, arcPoly(cx, cy, aH, aH + 360, () => R + 8), { stroke: COL.chalk, 'stroke-width': 7 }),
       loop = path(p, '', { stroke: COL.chalk, 'stroke-width': 7, 'stroke-linejoin': 'round' }),
       newH = path(p, '', { stroke: DNA, 'stroke-width': 7 }), newL = path(p, '', { stroke: DNA, 'stroke-width': 7, 'stroke-linejoin': 'round' });
     say(p, 'H', cx + R + 30, cy + 6, .5, { size: 26, fill: COL.dim, weight: 700, anchor: 'start' });
@@ -289,12 +243,12 @@ const BEATS = [
     prog(q => {
       const t = tS + q * (t1 - tS), e = eAt(t), b = bAt(t);
       if (e > aH + 1) {
-        outer.setAttribute('d', arcD(cx, cy, e, aH + 360, () => R + 8));
-        loop.setAttribute('d', arcD(cx, cy, aH, e, a => R + 8 + dist(e, a)));
-        newH.setAttribute('d', arcD(cx, cy, aH, e, () => R - 19));
+        outer.setAttribute('d', arcPoly(cx, cy, e, aH + 360, () => R + 8));
+        loop.setAttribute('d', arcPoly(cx, cy, aH, e, a => R + 8 + dist(e, a)));
+        newH.setAttribute('d', arcPoly(cx, cy, aH, e, () => R - 19));
       }
       const a0 = aL - 6;
-      newL.setAttribute('d', b > 1 ? arcD(cx, cy, a0, a0 - b, a => R + 8 + dist(e, a) - 14) : '');
+      newL.setAttribute('d', b > 1 ? arcPoly(cx, cy, a0, a0 - b, a => R + 8 + dist(e, a) - 14) : '');
       const [x, y] = ringPt(cx, cy, R + (e > aL - 4 ? 8 + dist(e, aL - 4) : 0), aL - 4);
       put(lDot, { x, y });
     }, tS, t1 - tS, lin);
