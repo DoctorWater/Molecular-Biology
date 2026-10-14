@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Скользящий зажим и хеликаза — ДНК и её копирование</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d2b27'/%3E%3Cpath d='M12 24H52M12 34H52' stroke='%23ece8dc' stroke-width='6'/%3E%3Cpath d='M12 44H52' stroke='%23f0b45a' stroke-width='6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<script src="../lib/engine.js"></script>
+<script src="../lib/bio.js"></script>
+<script src="audio/ru/timings.js"></script>
+<script>
+'use strict';
+const CHAPTER = { number: 9, title: 'Скользящий зажим и хеликаза', minutes: 13, language: 'ru' };
+
+/* ---------- chapter drawing helpers (shared ones: lib/bio.js — betaRing, clampSide, clampLoader, dnaBRing) ---------- */
+const NB = ' ';
+const fmt = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, NB);
+const seg1 = (p, x1, y1, x2, y2, c = COL.dim, w = 4) => path(p, `M${x1} ${y1}L${x2} ${y2}`, { stroke: c, 'stroke-width': w });
+const endLab = (p, str, x, y, t0, fill = COL.chalk) => say(p, str, x, y, t0, { size: 30, weight: 700, fill });
+const cross = (p, x, y, t0, k = 1, c = NO) => {
+  const g = G(p, { x, y, o: 0, s: k });
+  path(g, 'M-26 -26L26 26M26 -26L-26 26', { stroke: c, 'stroke-width': 8 });
+  if (t0 != null) show(g, t0, .3);
+  return g;
+};
+function nuc(p, x, y, b, col = DNA, link = 0, r = 20) {
+  const g = G(p, { x, y });
+  g.link = link ? path(g, `M${-link + r} 0H${-r}`, { stroke: col, 'stroke-width': 6 }) : null;
+  mk('circle', { r, fill: BASE[b] }, g);
+  T(g, b, { y: r * .4, size: r * 1.05, fill: COL.board, weight: 700, anchor: 'middle' });
+  return g;
+}
+const ring = (p, x, y, r = 30, c = NO) => put(mk('circle', { cx: x, cy: y, r, fill: 'none', stroke: c, 'stroke-width': 5 }, p), { o: 0 });
+function counterAt(p, x, y, t0, unit, { size = 110, fill = DNA, txt = '0' } = {}) {
+  const e = T(p, txt, { x, y, size, fill, weight: 700, anchor: 'end', o: 0 });
+  show(e, t0);
+  say(p, unit, x + 24, y, t0, { size: 30, fill: COL.dim, anchor: 'start', weight: 600 });
+  return e;
+}
+// A one-line note in the middle of the stage that replaces the previous one.
+const noteAt = (p, str, y, t0, t1, fill = COL.chalk, size = 32) => {
+  const e = say(p, str, 800, y, t0, { size, fill, weight: 700 });
+  if (t1 != null) hide(e, t1, .4);
+  return e;
+};
+// A thin 2-strand chain of beads or a fork scene helper for the fork scenes of this chapter.
+const FK = { xEnd: 1500, A: 40, P: 100, n: 6, back: 330, spread: 130, hel: null, tail: 110 };
+const ellipseBand = (p, X, Y, r1, r2, c, o = .5) => path(p, `M${-r2} 0a${r2} ${r2} 0 1 0 ${2 * r2} 0a${r2} ${r2} 0 1 0 ${-2 * r2} 0ZM${-r1} 0a${r1} ${r1} 0 1 0 ${2 * r1} 0a${r1} ${r1} 0 1 0 ${-2 * r1} 0Z`, { fill: c, 'fill-opacity': o, 'fill-rule': 'evenodd', stroke: 'none' }, { x: X, y: Y, o: 0 });
+
+/* ---------- beats: [id, title, run(m, D), { ask }?] ---------- */
+const BEATS = [
+  ['intro', 'Скользящий зажим и хеликаза', (m, D) => {
+    const g = G(scene, { o: 0, y: 24 });
+    T(g, 'Раздел 2 «Репликация ДНК у прокариот» · Глава 9', { x: 800, y: 330, size: 28, fill: COL.dim, anchor: 'middle' });
+    T(g, 'Скользящий зажим и хеликаза', { x: 800, y: 440, size: 70, weight: 600, anchor: 'middle' });
+    tw(g, { o: 1, y: 0 }, .2, 1.1, out);
+    const r = say(scene, 'два белковых кольца на вилке', 800, 540, m('sub'), { size: 36, fill: COL.dim });
+    tw(g, { o: 0, y: -24 }, D - .9, .8); hide(r, D - .9, .8);
+  }],
+  ['proc', 'Процессивность', (m) => {
+    const p = panel(0), x0 = 200, W = 1200, yD = 290;
+    // α alone: ≈ 10 nt and it falls off
+    say(p, 'α-субъединица Pol III одна', 90, 205, .3, { size: 28, fill: COL.chalk, weight: 600, anchor: 'start' });
+    path(p, `M300 ${yD + 24}H1000`, { stroke: COL.chalk, 'stroke-width': 6 });
+    const al = enzyme(p, 'α', 318, yD - 36, null, { w: 90, h: 56, size: 30 });
+    put(al, { o: 0 }); show(al, .3);
+    for (let i = 0; i < 10; i++) {
+      const b = mk('circle', { cx: 330 + 28 * i, cy: yD + 4, r: 11, fill: DNA }, p);
+      put(b, { o: 0 }); show(b, .8 + i * .42, .2);
+      tw(al, { x: 318 + 28 * (i + 1) }, .8 + i * .42, .3);
+    }
+    tw(al, { y: yD + 130, o: 0, r: 25 }, 5.4, .9);
+    say(p, 'отвалилась: ≈ 10 нт за посадку', 760, yD + 90, 5.6, { size: 26, fill: NO, weight: 700 });
+    pill(p, 'процессивность — число нуклеотидов за одно связывание с ДНК', PROT, 800, 140, m('def'), 26);
+    // the same enzyme on a 2000 nt fragment
+    const y1 = 480, y2 = 780;
+    say(p, 'фрагмент Оказаки: 2000 нт', x0, y1 - 40, m('bar'), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    const track = (y, t) => {
+      const r = mk('rect', { x: x0, y: y - 16, width: W, height: 32, rx: 10, fill: CARD, stroke: COL.dim, 'stroke-width': 2 }, p);
+      put(r, { o: 0 }); show(r, t);
+      return mk('rect', { x: x0, y: y - 16, width: 0, height: 32, rx: 10, fill: DNA }, p);
+    };
+    const f1 = track(y1, m('bar'));
+    const hop = enzyme(p, 'α', x0, y1 - 44, null, { w: 80, h: 48, size: 26 });
+    put(hop, { o: 0 }); show(hop, m('bar', .5));
+    colorLine(p, [['2000 / 10 = '], ['200', DNA]], 800, 560, m('cnt'), { size: 40 });
+    const c = counterAt(p, 640, 660, m('cnt'), 'посадок', { size: 90 });
+    prog(q => {
+      const n = Math.min(200, Math.floor(q * 201));
+      c.textContent = n; f1.setAttribute('width', W * n / 200);
+      put(hop, { x: x0 + W * n / 200 + 20, y: y1 - 44 - 22 * Math.abs(Math.sin(q * 200 * Math.PI)) });
+    }, m('cnt'), 4.2, lin);
+    say(p, 'Pol III на β-кольце: > 50 000 нт', x0, y2 - 44, m('ring'), { size: 26, fill: PROT, weight: 700, anchor: 'start' });
+    const f2 = track(y2, m('ring'));
+    const rd = enzyme(p, 'α + β', x0, y2 - 44, null, { w: 120, h: 48, size: 24 });
+    put(rd, { o: 0 }); show(rd, m('ring', .4));
+    prog(q => { f2.setAttribute('width', W * q); put(rd, { x: x0 + W * q + 40 }); }, m('ring', .6), 5, io);
+    pill(p, 'одна посадка вместо двухсот', OK, 800, 850, m('one'), 30);
+    pill(p, 'хеликаза расплетает ДНК', PROT, 1230, 660, m('hel'), 26);
+  }],
+  ['ring', 'β-кольцо', (m) => {
+    const p = panel(0), X = 540, Y = 480, g = betaRing(p, X, Y, .3), x0 = 940;
+    pill(p, 'β-кольцо — скользящий зажим', PROT, X, 150, .5, 30);
+    const bl = say(p, 'β', X + 280, Y + 12, m('dim'), { size: 36, fill: PROT, weight: 700 }), br = say(p, 'β', X - 280, Y + 12, m('dim', .3), { size: 36, fill: COL.chalk, weight: 700 });
+    say(p, 'димер β₂: две одинаковые молекулы', x0, 260, m('dim'), { size: 30, weight: 700, anchor: 'start' });
+    say(p, 'ген dnaN, каждая ≈ 41 кДа', x0, 304, m('dim', .8), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    g.labs.forEach((e, i) => show(e, m('dom', .3 + i * .25), .3));
+    show(g.arr, m('dom', 2.2), .5);
+    say(p, 'по три домена A, B, C в каждой', x0, 380, m('dom'), { size: 30, weight: 700, anchor: 'start' });
+    say(p, 'голова к хвосту: 6 доменов в кольце', x0, 424, m('dom', 2.2), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    const dna = G(p, { x: X, y: Y, o: 0 });
+    mk('circle', { r: 90, fill: mix(COL.board, DNA, .3), stroke: DNA, 'stroke-width': 4 }, dna);
+    T(dna, 'ДНК', { y: -4, size: 36, fill: DNA, weight: 700, anchor: 'middle' });
+    T(dna, '≈ 20 Å', { y: 38, size: 28, fill: COL.chalk, weight: 600, anchor: 'middle' });
+    show(dna, m('size'), .6);
+    hBracket(p, X - 157, X + 157, 735, 'отверстие ≈ 35 Å', COL.chalk, m('size', 2.6), { up: false });
+    const gap = ellipseBand(p, X, Y, 90, 157, COL.int);
+    show(gap, m('gap'), .5); pulse(gap, m('gap'), 1.04);
+    [-1, 1].forEach(s => say(p, '7,5', X + s * 124, Y + 8, m('gap', .5), { size: 24, fill: COL.int, weight: 700 }));
+    colorLine(p, [['(35 − 20) / 2 = '], ['7,5 Å', COL.int]], x0, 530, m('gap', 1), { size: 38, anchor: 'start' });
+    say(p, 'зазор с каждой стороны', x0, 574, m('gap', 1.4), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    show(g.plus, m('slide', 1.8), .6);
+    say(p, 'кольцо не сжимает спираль, а скользит', x0, 660, m('slide'), { size: 30, weight: 700, anchor: 'start' });
+    say(p, '12 α-спиралей выстилки, заряд «+»:', x0, 722, m('slide', 2), { size: 26, fill: COL.int, weight: 600, anchor: 'start' });
+    say(p, 'притягивают остов ДНК, но не держат', x0, 760, m('slide', 2.2), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+  }],
+  ['q1', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz({ x: 300, y: 170, w: 1000, cls: 'side', maxH: 640 }, [{
+    id: 'c-ring', prompt: ['Посчитайте.'], build: blanks(Q_RING),
+  }], done) }],
+  ['pocket', 'Гидрофобный карман', (m) => {
+    const p = panel(0), X = 520, Y = 480, K = 1.2, g = betaRing(p, X, Y, .3, { s: K });
+    const dna = G(p, { x: X, y: Y });
+    mk('circle', { r: 90 * K, fill: mix(COL.board, DNA, .3), stroke: DNA, 'stroke-width': 4 }, dna);
+    T(dna, 'ДНК', { y: 11, size: 40, fill: DNA, weight: 700, anchor: 'middle' });
+    g.labs.forEach(e => put(e, { o: 1 }));
+    const [[ax, ay], [bx, by]] = g.pkPt, P0 = [X + ax * K, Y + ay * K], P1 = [X + bx * K, Y + by * K];
+    show(g.pk[0], m('pk'), .4); pulse(g.pk[0], m('pk'), 1.3);
+    say(p, 'гидрофобный карман', 1180, 250, m('pk'), { size: 32, fill: COL.int, weight: 700 });
+    say(p, 'снаружи, между доменами B и C', 1180, 296, m('pk', .4), { size: 26, fill: COL.dim, weight: 600 });
+    const partner = (lab, tIn, tOut, x, y, w = 190) => {
+      const e = enzyme(p, lab, x + 320, y, null, { w, h: 60, size: 26 });
+      put(e, { o: 0 });
+      tw(e, { o: 1, x }, tIn, .5, out);
+      if (tOut != null) tw(e, { o: 0 }, tOut, .3);
+      return e;
+    };
+    const px = P0[0] + 110, py = P0[1];
+    partner('Pol III (α)', m('p3'), m('p1', -.2), px, py);
+    partner('Pol I', m('p1'), m('lig', -.2), px, py);
+    partner('лигаза', m('lig'), m('muts', -.1), px, py);
+    partner('MutS', m('muts'), m('two', -.2), px, py);
+    // two partners at once
+    show(g.pk[1], m('two'), .4);
+    const a = partner('Pol III', m('two'), null, px, py), b = enzyme(p, 'Pol IV', P1[0] - 430, P1[1], null, { w: 190, h: 60, size: 26 });
+    put(b, { o: 0 }); tw(b, { o: 1, x: P1[0] - 110 }, m('two', .6), .5, out);
+    say(p, 'два кармана, два партнёра', 1180, 700, m('two'), { size: 30, weight: 700 });
+    say(p, 'кольцо передаёт ДНК от одного к другому', 1180, 746, m('two', 1.6), { size: 26, fill: COL.dim, weight: 600 });
+  }],
+  ['loader', 'Загрузчик зажима', (m) => {
+    const p = panel(0), X = 560, ld = clampLoader(p, X, 360, null, { s: 1 });
+    const rg = betaRing(p, X, 585, .3, { s: .5 });
+    put(ld, { o: 0 }); show(ld, m('who'), .6);
+    pill(p, 'загрузчик зажима (clamp loader)', PROT, X, 70, m('who'), 28);
+    say(p, 'β₂ сам не раскрывается', X, 745, .6, { size: 26, fill: COL.dim, weight: 600 });
+    const x0 = 940, line = (str, y, t, c = COL.chalk) => say(p, str, x0, y, t, { size: 28, fill: c, weight: 600, anchor: 'start' });
+    ld.tau.forEach((e, i) => pulse(e, m('tau', i * .25), 1.25));
+    line('τ ×3: моторы, связывают и гидролизуют АТФ', 250, m('tau'));
+    pulse(ld.dd, m('key'), 1.1); line('δ: «ключ», размыкает кольцо', 320, m('key'));
+    pulse(ld.dp, m('dp'), 1.1); line('δ′: держит δ взаперти без АТФ', 390, m('dp'));
+    pulse(ld.chi, m('chi'), 1.2); line('χ связывается с SSB, ψ крепит χ к τ', 460, m('chi'));
+    const closed = say(p, 'нет АТФ: клешня закрыта', x0, 600, m('closed'), { size: 32, fill: NO, weight: 700, anchor: 'start' });
+    const cl2 = line('δ′ прижимает δ, и та не дотягивается до кольца', 646, m('closed', .4), COL.dim);
+    hide(closed, m('atp'), .4); hide(cl2, m('atp'), .4);
+    ld.atp.forEach((a, i) => { put(a, { y: a.y0 - 50 }); tw(a, { o: 1, y: a.y0 }, m('atp', i * .25), .5, out); });
+    ld.open(m('atp', .9), .9);
+    say(p, 'АТФ связан: клешня открыта', x0, 600, m('atp'), { size: 32, fill: OK, weight: 700, anchor: 'start' });
+    say(p, 'δ′ отошла, δ свободна', x0, 646, m('atp', .4), { size: 26, fill: COL.dim, weight: 600, anchor: 'start' });
+    show(rg.pk[0], m('grab'), .3);
+    rg.open(m('grab', .6), 1.1, 28);
+    pulse(ld.dd, m('grab'), 1.2);
+    say(p, 'δ хватает мономер за карман', x0, 730, m('grab'), { size: 28, fill: COL.chalk, weight: 700, anchor: 'start' });
+    say(p, 'и рвёт одну из двух границ', x0, 768, m('grab', .5), { size: 28, fill: COL.chalk, weight: 700, anchor: 'start' });
+    say(p, 'кольцо раскрывается само, как пружина', x0, 814, m('grab', 1.6), { size: 26, fill: COL.int, weight: 700, anchor: 'start' });
+  }],
+  ['energy', 'Откуда энергия', (m) => {
+    const p = panel(0), xa = 560, W = 800, y1 = 400, y2 = 560;
+    say(p, 'Что раскрывает кольцо?', 800, 150, .3, { size: 38, weight: 700 });
+    pill(p, 'не АТФ', NO, 800, 230, m('not'), 34);
+    say(p, 'связывание δ с β', 800, 300, m('not', 1.1), { size: 34, fill: OK, weight: 700 });
+    const row = (y, lab, sub, t) => {
+      say(p, lab, 90, y - 6, t, { size: 28, weight: 700, anchor: 'start' });
+      say(p, sub, 90, y + 30, t + .3, { size: 22, fill: COL.dim, weight: 600, anchor: 'start' });
+      const tr = mk('rect', { x: xa, y: y - 18, width: W + 40, height: 36, rx: 12, fill: CARD, stroke: COL.dim, 'stroke-width': 2 }, p);
+      put(tr, { o: 0 }); show(tr, t);
+      return mk('rect', { x: xa, y: y - 18, width: 0, height: 36, rx: 12, fill: PROT }, p);
+    };
+    const b2 = row(y2, 'δ + одиночный β', 'мутант, который не образует димер', m('mut'));
+    const b1 = row(y1, 'δ + кольцо β₂', 'обычный димер', m('mut', 2.4));
+    prog(q => { b1.setAttribute('width', 16 * q); b2.setAttribute('width', 800 * q); }, m('x50'), 1.6, io);
+    pill(p, '≥ 50 раз прочнее', PROT, 1180, 480, m('x50', 1.6), 30);
+    say(p, 'длина полосы — прочность связывания', xa, 452, m('x50', 1.6), { size: 22, fill: COL.dim, weight: 600, anchor: 'start' });
+    hBracket(p, xa + 16, xa + 800, 625, 'эту разницу δ тратит на разрыв границы между мономерами', COL.int, m('diff'), { up: false, size: 26 });
+  }],
+  ['q2', 'Быстрая проверка', () => { panel(0); }, { ask: done => quiz({ x: 300, y: 170, w: 1000, cls: 'side', maxH: 640 }, [{
+    id: 'c-energy', prompt: ['Откуда берётся энергия, раскрывающая β-кольцо?'],
+    build: choice(['Из связывания δ с мономером β',
+      'Из гидролиза АТФ субъединицами τ',
+      'Из движения δ′, когда она отходит',
+      'Энергия не нужна: кольцо раскрывается само'], 0,
+    'Опыт с мутантным β: δ связывается с одиночным мономером в 50 раз прочнее, чем с кольцом. Эта разница оплачивает разрыв границы.',
+    [null, 'АТФ только открывает загрузчик, освобождая δ; его гидролиз позже, когда ДНК уже внутри, заставляет загрузчик отпустить кольцо.',
+      'δ′ только держит δ взаперти, пока нет АТФ. Энергии на разрыв границы она не даёт.',
+      'Димер очень прочный и сам не раскрывается: нужна энергия связывания δ с β.']),
+  }], done) }],
+  ['cycle', 'Цикл загрузки', (m) => {
+    const p = panel(0), SC = .9, yT = 732, yP = 708, xj = 1150, RO = 159;
+    const steps = ['τ связывают АТФ, загрузчик открывается', 'δ слезает с δ′, садится на β, размыкает кольцо', 'ищет 3′-конец праймера на матрице',
+      'праймер-матрица входит в канал, в щель кольца', 'ДНК запускает гидролиз АТФ', 'загрузчик меняет форму, отпускает β', 'кольцо защёлкивается вокруг ДНК',
+      'загрузчик уходит, α-субъединица садится в карман'];
+    const keys = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'];
+    const L = steps.map((s, i) => say(p, `${i + 1}. ${s}`, 70, 190 + i * 66, .3, { size: 25, fill: COL.dim, weight: 600, anchor: 'start' }));
+    keys.forEach((k, i) => {
+      tw(L[i], { c_fill: DNA }, m(k), .3);
+      tw(L[i], { c_fill: COL.chalk }, i < 7 ? m(keys[i + 1]) : m('why'), .3);
+    });
+    const back = G(p), dn = G(p);
+    path(dn, `M800 ${yT}H1520`, { stroke: COL.chalk, 'stroke-width': 7 });
+    path(dn, `M800 ${yP}H${xj}`, { stroke: DNA, 'stroke-width': 7 });
+    let rungs = ''; for (let x = 820; x < xj; x += 20) rungs += `M${x} ${yP}V${yT}`;
+    path(dn, rungs, { stroke: COL.dim, 'stroke-width': 2.5 });
+    endLab(dn, '5′', 770, yP + 10, .4, DNA); endLab(dn, '3′', xj - 50, yP - 30, .4, DNA);
+    endLab(dn, '3′', 770, yT + 40, .4); endLab(dn, '5′', 1550, yT + 10, .4);
+    const front = G(p);
+    const ld = clampLoader(p, 900, 290, null, { s: SC });
+    put(ld, { o: 0 }); show(ld, .3);
+    const rg = clampSide(back, front, 900, 290 + RO, .3, { rx: 22, ry: 66, sw: 12 });
+    const mv = (x, y, t, dur) => { tw(ld, { x, y }, t, dur); rg.mv(x, y + RO, t, dur); };
+    ld.open(m('s1'), .9);
+    ld.atp.forEach((a, i) => { put(a, { y: a.y0 - 50 }); tw(a, { o: 1, y: a.y0 }, m('s1', .2 + i * .25), .5, out); });
+    rg.open(m('s2'), .8, 30);
+    const mk3 = G(p, { o: 0 });
+    path(mk3, `M${xj} 480V790`, { stroke: COL.int, 'stroke-width': 3, 'stroke-dasharray': '9 7' });
+    T(mk3, 'конец праймера', { x: xj + 36, y: 812, size: 24, fill: COL.int, weight: 700, anchor: 'start' });
+    show(mk3, m('s3'), .4);
+    mv(xj, 290, m('s3'), 1.8);
+    mv(xj, 561, m('s4'), 2.2);
+    ld.atp.forEach((a, i) => { pulse(a, m('s5', i * .2), 1.5); tw(a.firstChild, { c_fill: COL.dim }, m('s5', .9), .5); });
+    hide(pill(p, 'АТФ → АДФ + фосфат', COL.int, 1380, 470, m('s5'), 26), m('s7'), .4);
+    tw(ld.dd, { r: -32 }, m('s6'), .6); tw(ld.dp, { r: 44 }, m('s6'), .6);
+    rg.close(m('s7'), .5);
+    pulse(rg.fr, m('s7'), 1.15);
+    tw(ld, { y: 290, o: 0 }, m('s8'), 1.1);
+    const al = enzyme(p, 'α · Pol III', xj + 260, 540, null, { w: 150, h: 50, size: 24 });
+    put(al, { o: 0 }); tw(al, { o: 1 }, m('s8', .3), .4); tw(al, { x: xj + 110, y: 640 }, m('s8', .7), .8);
+    pill(p, 'АТФ — переключатель, а не сила', DNA, 1000, 862, m('why'), 28);
+  }],
+  ['unload', 'Как кольцо снимают', (m) => {
+    const p = panel(0), yT = 470, FW = 230, xs = [170, 430, 690, 950];
+    const back = G(p), dn = G(p);
+    path(dn, `M120 ${yT}H1500`, { stroke: COL.chalk, 'stroke-width': 7 });
+    const front = G(p), rings = [];
+    xs.forEach((x, i) => {
+      if (i === 3) return;
+      const f = G(dn, { o: 0 }); path(f, `M${x} ${yT - 24}H${x + FW}`, { stroke: DNA, 'stroke-width': 8 });
+      show(f, .3 + i * .3);
+      rings.push(clampSide(back, front, x, yT - 12, .5 + i * .3, { rx: 14, ry: 36, sw: 9 }));
+    });
+    // the newest fragment grows to the left and meets the previous one
+    const nf = path(dn, `M${xs[3] + FW} ${yT - 24}H${xs[3] + FW}`, { stroke: DNA, 'stroke-width': 8 });
+    const rg3 = clampSide(back, front, xs[3] + FW - 40, yT - 12, .8, { rx: 14, ry: 36, sw: 9 });
+    const pol = enzyme(p, 'Pol III', xs[3] + FW - 40, yT - 100, null, { w: 150, h: 52, size: 24 });
+    put(pol, { o: 0 }); show(pol, .8);
+    prog(q => {
+      const xl = xs[3] + FW - FW * q;
+      nf.setAttribute('d', `M${xl} ${yT - 24}H${xs[3] + FW}`);
+      rg3.at(xl, yT - 12); put(pol, { x: xl });
+    }, 1.2, m('hit', -.25) - 1.2, io);
+    endLab(p, '5′', xs[3] + FW + 20, yT + 44, .5, DNA); endLab(p, '3′', xs[3] - 22, yT + 44, .5, DNA);
+    tw(pol, { x: xs[3] - 30 }, m('hit'), .25); tw(pol, { x: xs[3] + 10, y: yT - 190, o: 0, r: 20 }, m('hit', .3), .8);
+    pill(p, 'столкновение: Pol III отщёлкивается, кольцо остаётся', COL.int, 800, 250, m('hit', .3), 28);
+    // counting the rings
+    const cl = colorLine(p, [['4 600 000 / 2000 = '.replace(/ (?=\d{3})/g, NB)], ['2300', DNA]], 800, 650, m('many'), { size: 40 });
+    const cc = counterAt(p, 700, 780, m('many', 1), 'колец', { size: 90 });
+    prog(q => { cc.textContent = fmt(Math.round(2300 * q)); }, m('many', 5), 3.2, lin);
+    hide(cl, m('del', -.3), .4); hide(cc, m('del', -.3), .4); hide(cc.nextSibling, m('del', -.3), .4);
+    // δ takes a ring off
+    const dl = enzyme(p, 'δ', xs[1] - 110, yT - 150, null, { w: 80, h: 52, size: 28 });
+    put(dl, { o: 0 }); tw(dl, { o: 1 }, m('del'), .4); tw(dl, { x: xs[1] - 36, y: yT - 100 }, m('del', .4), .6);
+    rings[1].open(m('del', 1.2), .7, 28);
+    rings[1].mv(xs[1] - 36, yT - 160, m('del', 2), .9); tw(rings[1].bk, { o: 0 }, m('del', 2.6), .4); tw(rings[1].fr, { o: 0 }, m('del', 2.6), .4);
+    tw(dl, { x: xs[1] - 36, y: yT - 210, o: 0 }, m('del', 2), .9);
+    pill(p, 'одиночная δ снимает кольцо без АТФ', OK, 800, 650, m('del', .6), 28);
+    const rt = colorLine(p, [['k = 0,011 с⁻¹ (в пробирке)']], 800, 730, m('rate'), { size: 34 });
+    colorLine(p, [['ln 2 / 0,011 ≈ '], ['63 с', DNA]], 800, 790, m('rate', 1.2), { size: 40 });
+    pill(p, 'свободной δ больше, чем загрузчиков', PROT, 800, 860, m('free'), 28);
+  }],
+  ['dnab', 'Хеликаза DnaB', (m) => {
+    const p = panel(0), X = 500, Y = 500, hx = dnaBRing(p, X, Y, null);
+    pill(p, 'хеликаза DnaB (вид с торца)', PROT, X, 190, .3, 28);
+    hx.subs.forEach((s, i) => { put(s, { o: 0 }); tw(s, { o: 1 }, .5 + i * .22, .4); });
+    const x0 = 900, line = (str, y, t, c = COL.chalk, size = 28) => say(p, str, x0, y, t, { size, fill: c, weight: 600, anchor: 'start' });
+    line('нужна одиночная цепь-матрица', 250, .6, COL.dim, 26);
+    line('гексамер: 6 × ≈ 52 кДа', 310, m('hex'), PROT, 32);
+    hx.subs.forEach((s, i) => pulse(s, m('hex', i * .35), 1.12));
+    line('в каждой субъединице два домена', 380, m('two'));
+    pulse(hx.subs[0], m('two'), 1.12);
+    const nl = say(p, 'NTD', X, Y - 170 + 8, m('ntd'), { size: 22, fill: COL.chalk, weight: 700 }), cl = say(p, 'CTD', X, Y - 96 + 8, m('ctd'), { size: 24, fill: COL.chalk, weight: 700 });
+    line('N-концевой (NTD): собирает гексамер,', 450, m('ntd'), PROT);
+    line('задаёт направление движения', 486, m('ntd', .4), PROT);
+    hx.ntd.forEach((e, i) => pulse(e, m('ntd', i * .12), 1.3));
+    const dim = G(p, { x: X, y: Y, o: 0 });
+    [0, 2, 4].forEach(i => {
+      const a = (i * 60 - 60) * Math.PI / 180;
+      path(dim, `M${170 * Math.cos((i * 60 - 90) * Math.PI / 180)} ${170 * Math.sin((i * 60 - 90) * Math.PI / 180)}A170 170 0 0 1 ${170 * Math.cos(a)} ${170 * Math.sin(a)}`, { stroke: COL.int, 'stroke-width': 7, 'stroke-linecap': 'round' });
+    });
+    show(dim, m('ntd', 3.2), .5);
+    line('шесть NTD: тример из димеров', 530, m('ntd', 3.2), COL.int, 26);
+    line('C-концевой (CTD): похож на RecA,', 600, m('ctd'), PROT);
+    line('связывает и гидролизует АТФ, держит ДНК', 636, m('ctd', .4), PROT);
+    hx.ctd.forEach((e, i) => pulse(e, m('ctd', i * .12), 1.2));
+    hx.lnk.forEach((e, i) => tw(e, { c_stroke: COL.int }, m('link', i * .1), .4));
+    line('линкерная спираль: скрепляет кольцо CTD,', 710, m('link'), COL.int);
+    line('передаёт изменения формы между доменами', 746, m('link', .4), COL.int);
+  }],
+  ['dnac', 'Как DnaB садится на ДНК', (m) => {
+    const p = panel(0), X = 1000, Y = 580, hx = dnaBRing(p, X, Y, .3, { s: .8 });
+    // the origin: duplex → bubble
+    const yo = 300;
+    path(p, `M120 ${yo - 16}H340M120 ${yo + 16}H340M560 ${yo - 16}H760M560 ${yo + 16}H760`, { stroke: COL.chalk, 'stroke-width': 7 });
+    let rg = ''; for (let x = 130; x < 760; x += 20) if (x < 340 || x > 560) rg += `M${x} ${yo - 16}V${yo + 16}`;
+    const mid = G(p), bub = G(p, { o: 0 });
+    path(p, rg, { stroke: COL.dim, 'stroke-width': 2.5 });
+    path(mid, `M340 ${yo - 16}H560M340 ${yo + 16}H560`, { stroke: COL.chalk, 'stroke-width': 7 });
+    let rm = ''; for (let x = 350; x < 560; x += 20) rm += `M${x} ${yo - 16}V${yo + 16}`;
+    path(mid, rm, { stroke: COL.dim, 'stroke-width': 2.5 });
+    path(bub, `M340 ${yo - 16}Q450 ${yo - 90} 560 ${yo - 16}M340 ${yo + 16}Q450 ${yo + 90} 560 ${yo + 16}`, { stroke: COL.chalk, 'stroke-width': 7 });
+    say(p, 'ориджин', 450, 190, .5, { size: 28, fill: COL.int, weight: 700 });
+    const da = enzyme(p, 'DnaA', 450, 230, null, { w: 120, h: 44, size: 24 });
+    put(da, { o: 0 }); tw(da, { o: 1, y: 245 }, m('dnaA'), .5);
+    hide(mid, m('dnaA', .8), .6); show(bub, m('dnaA', .8), .6);
+    say(p, 'DnaA плавит ДНК', 450, 390, m('dnaA', .4), { size: 28, fill: COL.chalk, weight: 700 });
+    // DnaC ×6 around the ring, a strand goes through the gap
+    const cs = [0, 1, 2, 3, 4, 5].map(i => {
+      const a = (i * 60 - 60) * Math.PI / 180, r = 268 * .8, g = G(p, { x: X + r * Math.cos(a) * 1, y: Y + r * Math.sin(a), o: 0 });
+      mk('circle', { r: 28, fill: mix(COL.board, COL.int, .3), stroke: COL.int, 'stroke-width': 3 }, g);
+      T(g, 'C', { y: 10, size: 28, fill: COL.int, weight: 700, anchor: 'middle' });
+      return g;
+    });
+    cs.forEach((c, i) => tw(c, { o: 1 }, m('dnaC', i * .25), .4));
+    hide(say(p, 'DnaC ×6', 1400, 540, m('dnaC'), { size: 28, fill: COL.int, weight: 700 }), m('leave'), .3);
+    const st = G(p, { x: X, y: Y - 300, o: 0 });
+    mk('circle', { r: 16, fill: COL.chalk }, st);
+    const sl = say(p, 'одиночная цепь', X + 34, Y - 292, m('dnaC', 1.2), { size: 26, fill: COL.chalk, weight: 600, anchor: 'start' });
+    tw(st, { o: 1 }, m('dnaC', 1), .4);
+    hide(sl, m('leave'), .3);
+    const s0 = hx.subs[0];
+    tw(s0, { x: -90, y: -50 }, m('dnaC', 1.6), .6);
+    tw(st, { y: Y }, m('dnaC', 2.2), 1.1);
+    tw(s0, { x: 0, y: 0 }, m('dnaC', 3.5), .6);
+    const pl = pill(p, 'кольцо раскрыто и надето на цепь', COL.int, 800, 760, m('dnaC', 1.8), 26);
+    hide(pl, m('leave'), .3);
+    cs.forEach((c, i) => { tw(c, { o: 0, x: c._st.x * 1.0 + (c._st.x - X) * .4, y: c._st.y + (c._st.y - Y) * .4 }, m('leave', i * .1), .8); });
+    pill(p, 'гидролиз АТФ: DnaC уходит, DnaB включается', OK, 800, 840, m('leave'), 28);
+    pulse(hx, m('leave', 1.2), 1.08);
+    say(p, 'старт репликации — глава 11', 440, 560, m('ch11'), { size: 26, fill: COL.dim, weight: 600 });
+  }],
+  ['excl', 'Исключение цепи', (m) => {
+    const p = panel(0), back = G(p);
+    const fk = fork(p, 600, 330, .3, { ...FK, xEnd: 1000, A: 36, P: 90, n: 4, back: 330, spread: 120, tail: 120 });
+    const front = G(p);
+    const rg = clampSide(back, front, 0, 0, null, { rx: 18, ry: 32, sw: 10 });
+    put(back, { o: 0 }); put(front, { o: 0 });
+    fk.hooks.push(c => { const x = c.x - 110, y = fk.rail(1, x, c.x); rg.at(x, y); });
+    fk.at(fk.cur);
+    const yT = fk.rail(-1, 250, 600), yB = fk.rail(1, 250, 600);
+    endLab(p, '3′', 90, yT + 10, .5); endLab(p, '5′', 90, yB + 10, .5);
+    tw(back, { o: 1 }, m('in'), .4); tw(front, { o: 1 }, m('in'), .4);
+    const dl = say(p, 'DnaB', 490, yB + 62, m('in'), { size: 28, fill: PROT, weight: 700 });
+    fk.hooks.push(c => put(dl, { x: c.x - 110, y: fk.rail(1, c.x - 110, c.x) + 62 }));
+    fk.at(fk.cur);
+    const a1 = G(p, { o: 0 });
+    arrowTo(a1, 360, yB + 100, 560, yB + 100, COL.int, 0);
+    T(a1, '5′→3′', { x: 460, y: yB + 136, size: 28, fill: COL.int, weight: 700, anchor: 'middle' });
+    show(a1, m('in'), .4);
+    say(p, 'матрица отстающей: сквозь канал', 270, yB + 190, m('in'), { size: 26, fill: OK, weight: 700 });
+    say(p, 'матрица лидирующей: снаружи', 270, yT - 60, m('out'), { size: 26, fill: NO, weight: 700 });
+    pulse(front, m('in'), 1.0);
+    const zip = G(p, { o: 0 }); arrowTo(zip, 780, 150, 960, 150, COL.dim, 0);
+    T(zip, 'вилка движется', { x: 870, y: 120, size: 26, fill: COL.dim, weight: 600, anchor: 'middle' });
+    show(zip, m('zip'), .4);
+    fk.to(850, m('zip'), 4.8);
+    say(p, 'как бегунок застёжки-молнии', 800, 700, m('zip'), { size: 30, weight: 700 });
+    say(p, 'разрывает водородные связи перед собой', 800, 744, m('zip', .5), { size: 26, fill: COL.dim, weight: 600 });
+    // the N-terminal domains give the direction
+    const hx = dnaBRing(p, 1330, 560, null, { s: .5 });
+    put(hx, { o: 0 }); tw(hx, { o: 1 }, m('ntd'), .5);
+    say(p, 'DnaB с торца', 1330, 410, m('ntd'), { size: 24, fill: COL.dim, weight: 600 });
+    const d1 = G(p, { o: 0 }); arrowTo(d1, 1220, 720, 1440, 720, COL.int, 0); show(d1, m('ntd', .6), .4);
+    say(p, 'NTD: один путь', 1330, 690, m('ntd', .6), { size: 24, fill: COL.int, weight: 700 });
+    hx.ntd.forEach((e, i) => tw(e, { o: 0 }, m('g40', i * .12), .4));
+    const d2 = G(p, { o: 0 }); arrowTo(d2, 1440, 765, 1220, 765, COL.int, 0); show(d2, m('g40', 1), .4);
+    pill(p, 'G40P без NTD: в обе стороны', NO, 1330, 830, m('g40', 1), 24);
+  }],
+  ['step', 'Рука за рукой', (m) => {
+    const p = panel(0), yD = 650, XH = 560, X0 = 300, N = 28, PIT = 40, SL = 80;
+    const body = mix(COL.board, PROT, .42);
+    const dn = G(p);
+    const bases = 'GATCCGTAGCTAGGCATTCGAGCTAAGC';
+    const bot = [...bases].map((b, i) => nuc(dn, X0 + i * PIT, yD, b, COL.chalk, 0, 15));
+    path(dn, `M${X0} ${yD}H${X0 + (N - 1) * PIT}`, { stroke: COL.chalk, 'stroke-width': 5 }); dn.insertBefore(dn.lastChild, dn.firstChild);
+    const comp = { A: 'T', T: 'A', G: 'C', C: 'G' };
+    const top = [];
+    for (let i = 19; i < N; i++) top.push(nuc(dn, X0 + i * PIT, yD - 36, comp[bases[i]], DNA, 0, 15));
+    endLab(dn, '5′', X0 - 36, yD + 10, .3); endLab(dn, '3′', X0 + (N - 1) * PIT + 36, yD + 10, .3);
+    const sy = s => 520 - 16 * s, sx = s => XH + SL * s + 20;
+    const subs = [0, 1, 2, 3, 4, 5].map(k => {
+      const e = G(p, { x: sx(k), y: sy(k), o: 0 });
+      mk('rect', { x: -33, y: -25, width: 66, height: 50, rx: 15, fill: body, stroke: PROT, 'stroke-width': 3 }, e);
+      e.gr = [-20, 20].map(dx => mk('line', { x1: dx, y1: 25, x2: dx, y2: yD - 18 - sy(k), stroke: PROT, 'stroke-width': 4 }, e));
+      e.A = G(e, { y: -44, o: 0 }); mk('circle', { r: 21, fill: COL.int }, e.A); T(e.A, 'АТФ', { y: 7, size: 17, fill: COL.board, weight: 700, anchor: 'middle' });
+      e.D = G(e, { y: -44, o: 0 }); mk('circle', { r: 21, fill: CARD, stroke: COL.dim, 'stroke-width': 3 }, e.D); T(e.D, 'АДФ', { y: 7, size: 17, fill: COL.dim, weight: 700, anchor: 'middle' });
+      return e;
+    });
+    subs.forEach((e, k) => tw(e, { o: 1 }, .3 + k * .15, .4));
+    say(p, 'DnaB, вид сбоку: винтовая лестница', 800, 850, .5, { size: 26, fill: COL.dim, weight: 600 });
+    const slot = subs.map((_, k) => k);   // slot of each subunit
+    let dx = 0;
+    const doStep = (t, dur = 2) => {
+      const j = slot.indexOf(0);
+      subs.forEach((e, k) => {
+        if (k === j) return;
+        slot[k]--;
+        tw(e, { x: sx(slot[k]), y: sy(slot[k]) }, t, dur);
+        e.gr.forEach(l => tw(l, { a_y2: yD - 18 - sy(slot[k]) }, t, dur));
+      });
+      const e = subs[j];
+      slot[j] = 5;
+      tw(e, { y: 330, x: (sx(0) + sx(5)) / 2 }, t, dur / 2, out);
+      tw(e, { x: sx(5), y: sy(5) }, t + dur / 2, dur / 2, io);
+      e.gr.forEach(l => tw(l, { a_y2: yD - 18 - sy(5) }, t + dur / 2, dur / 2));
+      tw(e.A, { o: 0 }, t + dur - .1, .3); tw(e.D, { o: 0 }, t + dur - .1, .3);
+      dx -= SL; tw(dn, { x: dx }, t, dur);
+    };
+    // ATP is hydrolysed in the trailing subunit, then it moves
+    const hydro = (k, t) => { tw(subs[k].A, { o: 1 }, t, .3); pulse(subs[k].A, t, 1.3); tw(subs[k].A, { o: 0 }, t + 1, .3); tw(subs[k].D, { o: 1 }, t + 1, .3); };
+    const peel = (n, t) => { for (let i = 0; i < 2; i++) { const b = top[2 * n + i]; if (b) tw(b, { y: b._st.y - 130, o: 0 }, t, .8); } };
+    noteAt(p, 'каждая субъединица держит ≈ 2 нт одиночной цепи', 210, m('hold'), m('s1', -.2));
+    noteAt(p, 'замыкающая (5′) субъединица гидролизует АТФ', 210, m('s1'), m('s2', -.2), COL.int);
+    hydro(0, m('s1', .4));
+    noteAt(p, 'она отпускает ДНК и переходит в голову лестницы', 210, m('s2'), m('s3', -.2));
+    const t1 = m('s2', .6); doStep(t1, 2.4); peel(0, t1 + 1);
+    noteAt(p, 'субъединица прошла ≈ 12 нт, а хеликаза продвинулась на 2', 210, m('s3'), m('s4', -.2), OK);
+    const b12 = G(p, { o: 0 }); path(b12, `M${sx(0)} 305H${sx(5)}`, { stroke: COL.int, 'stroke-width': 3 });
+    T(b12, '≈ 12 нт', { x: (sx(0) + sx(5)) / 2, y: 290, size: 24, fill: COL.int, weight: 700, anchor: 'middle' });
+    show(b12, m('s3', .3), .4); hide(b12, m('s4', -.2), .4);
+    noteAt(p, 'следующая повторяет: рука за руку', 210, m('s4'), m('cost', -.2));
+    hydro(slot.indexOf(0), m('s4', .2)); const t2 = m('s4', .8); doStep(t2, 2.2); peel(1, t2 + 1);
+    const t3 = m('s4', 3.8); hydro(slot.indexOf(0), t3 - .6); doStep(t3, 2.2); peel(2, t3 + 1);
+    noteAt(p, '1 АТФ — шаг на 2 нт', 210, m('cost'), null, COL.int);
+    colorLine(p, [['1000 / 2 = '], ['500', DNA], [' АТФ в секунду']], 800, 280, m('cost', 2.5), { size: 36 });
+    // SSB on the single strands behind the ring
+    [0, 1, 2].forEach(i => {
+      const e = enzyme(p, 'SSB', X0 - 240 + 100 + 120 * i, yD + 56, null, { w: 104, h: 44, size: 22 });
+      put(e, { o: 0 }); tw(e, { o: 1 }, m('ssb', .3 + i * .5), .4);
+    });
+    noteAt(p, 'SSB закрывает одиночные цепи: нет ни спаривания, ни шпилек', 800, m('ssb'), null, PROT, 28);
+  }],
+  ['q3', 'Быстрая проверка', () => {
+    const p = panel(0), fk = fork(p, 880, 380, .2, { ...FK, hel: 'DnaB' });
+    const yT = fk.rail(-1, 400, 880), yB = fk.rail(1, 400, 880);
+    endLab(p, '3′', 80, yT + 10, .3); endLab(p, '5′', 80, yB + 10, .3);
+    say(p, 'матрица лидирующей цепи', 380, yT - 40, .3, { size: 26, fill: COL.dim, weight: 600 });
+    say(p, 'матрица отстающей цепи', 380, yB + 60, .3, { size: 26, fill: COL.dim, weight: 600 });
+    S.picks = [{ el: fk, box: [110, yT - 36, 770, 72], label: 'верхняя матрица' }, { el: fk, box: [110, yB - 36, 770, 72], label: 'нижняя матрица' }];
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-strand', prompt: ['DnaB пропускает одну из родительских цепей сквозь канал кольца. Нажмите на эту цепь.'],
+    build: pickEls(S.picks, 1, 'DnaB идёт по матрице отстающей цепи в направлении 5′→3′; цепь проходит сквозь канал, а вторая остаётся снаружи.',
+      () => 'Верхняя цепь — матрица лидирующей: она остаётся снаружи кольца. Сквозь канал проходит матрица отстающей цепи.'),
+  }], done) }],
+  ['speed', 'Скорость вилки', (m) => {
+    const p = panel(0), back = G(p);
+    const fk = fork(p, 300, 470, .3, { ...FK, xEnd: 1500, A: 36, P: 90, n: 6, back: 300, spread: 110, hel: 'DnaB', tail: 100, lead: 130 });
+    const front = G(p);
+    const rg = clampSide(back, front, 0, 0, null, { rx: 14, ry: 30, sw: 9 });
+    const pol = enzyme(p, 'Pol III', 0, 0, null, { w: 150, h: 50, size: 24 }), lk = G(p), tp = G(p, { o: 0 });
+    mk('circle', { r: 26, fill: mix(COL.board, PROT, .45), stroke: PROT, 'stroke-width': 3 }, tp); T(tp, 'τ', { y: 10, size: 30, fill: PROT, weight: 700, anchor: 'middle' });
+    put(pol, { o: 0 }); put(lk, { o: 0 }); put(back, { o: 0 }); put(front, { o: 0 });
+    fk.hooks.push(c => {
+      const xr = c.x - 110, yr = fk.rail(-1, xr, c.x) - 9, px = c.x - 170, py = fk.rail(-1, px, c.x) - 17 - 84;
+      rg.at(xr, yr); put(pol, { x: px, y: py });
+      put(tp, { x: c.x - 70, y: py - 14 });
+      lk.replaceChildren();
+      path(lk, `M${px + 60} ${py}L${c.x - 70 - 18} ${py - 14}M${c.x - 70 + 8} ${py - 14 + 24}L${c.x - 10} ${470 - 46}`, { stroke: PROT, 'stroke-width': 5 });
+    });
+    fk.at(fk.cur);
+    const cnt = counterAt(p, 1230, 170, .3, 'нт/с', { size: 90, txt: '35' });
+    say(p, 'скорость расплетания', 1230, 100, .3, { size: 24, fill: COL.dim, weight: 600, anchor: 'end' });
+    const ttl0 = say(p, 'DnaB сама по себе', 90, 170, .3, { size: 34, weight: 700, anchor: 'start' });
+    fk.go({ x: 331 }, .3, 4.2);
+    const tauT = m('tau');
+    tw(pol, { o: 1 }, tauT, .5); tw(lk, { o: 1 }, tauT, .5); tw(tp, { o: 1 }, tauT, .5); tw(back, { o: 1 }, tauT, .5); tw(front, { o: 1 }, tauT, .5);
+    const ttl = say(p, 'DnaB + τ', 90, 170, tauT, { size: 34, fill: PROT, weight: 700, anchor: 'start' });
+    hide(ttl0, tauT, .3);
+    prog(q => { cnt.textContent = Math.round(35 + 965 * q); }, tauT + .4, 1.8, io);
+    fk.go({ x: 1231 }, tauT + .6, 4.5);
+    pill(p, '1000 / 35 ≈ 29 раз', DNA, 800, 780, m('x29'), 34);
+    pulse(tp, m('tie'), 1.4);
+    say(p, 'полимераза держится за τ и не отстаёт', 800, 860, m('tie'), { size: 28, fill: OK, weight: 700 });
+    const wo = m('without');
+    tw(lk, { o: 0 }, wo, .4); tw(tp, { o: 0 }, wo, .4); hide(ttl, wo, .3);
+    say(p, 'DnaB без τ', 90, 170, wo, { size: 34, fill: NO, weight: 700, anchor: 'start' });
+    pill(p, 'без τ вилка идёт со скоростью хеликазы', NO, 800, 700, m('without'), 28);
+    prog(q => { if (q > 0) cnt.textContent = Math.round(1000 - 965 * q); }, m('without'), 1.2, io);
+    say(p, 'сборка реплисомы — глава 10', 1250, 780, m('ch10'), { size: 26, fill: COL.dim, weight: 600 });
+  }],
+  ['wrap', 'Итоги', (m) => {
+    const p = panel(0);
+    numbered(p, [
+      ['β-кольцо держит полимеразу на ДНК: от ≈ 10 до > 50 000 нт за посадку', 'w1'],
+      ['загрузчик раскрывает кольцо энергией связывания δ; АТФ — переключатель', 'w2'],
+      ['DnaB — гексамер: идёт по матрице отстающей цепи 5′→3′, рука за руку, 2 нт за АТФ', 'w3'],
+      ['связь с τ разгоняет DnaB с ≈ 35 до ≈ 1000 нт/с', 'w4'],
+    ], m, 180, 120, 30);
+  }],
+  ['final1', 'Практика главы', () => { panel(0); }, { ask: done => quiz(SCREEN, [{
+    id: 'p-num', prompt: ['Впишите числа (пробелы в числах можно не ставить).'], build: blanks(P_NUM),
+  }], done, 'Практика главы   1 из 3') }],
+  ['final2', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-tf', prompt: ['Верно или неверно?'], build: grid(P_TF, TF, { multi: false, text: true }),
+  }], done, 'Практика главы   2 из 3') }],
+  ['final3', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{
+    id: 'p-who', prompt: ['Какой это белок?'], build: grid(P_WHO, WCOLS, { multi: false, text: true }),
+  }], done, 'Практика главы   3 из 3') }],
+  ['finish', 'Готово', () => {}, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+/* ---------- question data ---------- */
+const Q_RING = [
+  { parts: [`Pol III без зажима присоединяет ≈ 10 нт за посадку. Посадок на фрагмент Оказаки в 1500 нт: `, { box: '150' }], why: '1500 / 10 = 150.', hint: 'Длину фрагмента разделите на 10.' },
+  { parts: [`Отверстие кольца ≈ 35 Å, спираль ≈ 20 Å. Зазор с каждой стороны, Å: `, { box: '7,5' }], why: '(35 − 20) / 2 = 7,5.', hint: 'Разность делится пополам: зазор есть с двух сторон.' },
+];
+const P_NUM = [
+  { parts: [`Фрагмент 3000 нт, Pol III без зажима (≈ 10 нт за посадку): посадок `, { box: '300' }], why: '3000 / 10 = 300.', hint: '3000 / 10.' },
+  { parts: [`Отстающая цепь 4${NB}600${NB}000 нт, фрагменты по 1000 нт: колец `, { box: '4600' }], why: '4 600 000 / 1000 = 4600.', hint: '4600 тысяч / 1 тысяча.' },
+  { parts: [`Отверстие кольца 33 Å, ДНК 20 Å: зазор с каждой стороны, Å: `, { box: '6,5' }], why: '(33 − 20) / 2 = 6,5.', hint: 'Разность делится пополам.' },
+  { parts: [`Вилка идёт со скоростью 600 нт/с, один АТФ даёт шаг на 2 нт: молекул АТФ в секунду `, { box: '300' }], why: '600 / 2 = 300.', hint: 'Скорость разделите на длину шага.' },
+  { parts: [`DnaB с τ идёт ≈ 1000 нт/с, одна ≈ 35 нт/с. Ускорение, раз (целое): `, { box: '29' }], why: '1000 / 35 ≈ 28,6, то есть почти в 29 раз.', hint: '1000 / 35 ≈ 28,6.' },
+];
+const P_TF = [
+  { parts: ['β-кольцо собрано из двух разных белков.'], ans: ['f'], why: 'Из двух одинаковых молекул β: это димер β₂.' },
+  { parts: ['У каждой молекулы β три домена.'], ans: ['t'], why: 'В кольце шесть доменов.' },
+  { parts: ['Загрузчик раскрывает кольцо за счёт гидролиза АТФ.'], ans: ['f'], why: 'Энергию даёт связывание δ с β; АТФ нужен для переключения.' },
+  { parts: ['Одиночная δ снимает кольцо с ДНК без АТФ.'], ans: ['t'], why: 'Она раскрывает β и стягивает его с ДНК.' },
+  { parts: ['После столкновения с предыдущим фрагментом Pol III остаётся на кольце.'], ans: ['f'], why: 'Она отщёлкивается, а кольцо остаётся на ДНК.' },
+  { parts: ['DnaB идёт по матрице лидирующей цепи.'], ans: ['f'], why: 'По матрице отстающей; цепь лидирующей остаётся снаружи кольца.' },
+  { parts: ['Один гидролиз АТФ продвигает DnaB примерно на два нуклеотида.'], ans: ['t'], why: 'Субъединица проходит ≈ 12 нт, а гексамер — 2 нт.' },
+  { parts: ['DnaB может сама сесть на двойную спираль.'], ans: ['f'], why: 'Нужна одиночная цепь: DnaA плавит ориджин, DnaC надевает кольцо.' },
+];
+const WCOLS = [['b', 'β-кольцо', null, '1'], ['l', 'загрузчик зажима', null, '2'], ['d', 'DnaB', null, '3']];
+const P_WHO = [
+  { parts: ['Бублик, надетый на двойную спираль, отверстие ≈ 35 Å'], ans: ['b'], why: 'Это скользящий зажим.' },
+  { parts: ['Гидрофобный карман для Pol III, Pol I и лигазы'], ans: ['b'], why: 'Карманов два, по одному на мономер.' },
+  { parts: ['Субъединицы τ, δ, δ′, χ, ψ'], ans: ['l'], why: 'Комплекс τ₃δδ′χψ.' },
+  { parts: ['Субъединица δ размыкает кольцо'], ans: ['l'], why: 'δ — «ключ» загрузчика.' },
+  { parts: ['Гексамер, идёт по матрице отстающей цепи'], ans: ['d'], why: 'Матрица лидирующей остаётся снаружи кольца.' },
+  { parts: ['Шаг «рука за руку»: 1 АТФ — 2 нт'], ans: ['d'], why: 'Шесть субъединиц перехватывают цепь по очереди.' },
+];
+boot();
+</script>
+</body>
+</html>

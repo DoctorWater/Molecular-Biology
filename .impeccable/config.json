@@ -1,0 +1,44 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "ch08/index.html"
+        ],
+        "createdAt": "2026-10-13T21:02:29.234Z",
+        "reason": "user confirmed 2026-10-14: keep card side accent as is"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "lib/engine.css"
+        ],
+        "createdAt": "2026-10-13T21:02:29.375Z",
+        "reason": "user confirmed 2026-10-14: keep card side accent as is"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "index.html"
+        ],
+        "createdAt": "2026-10-13T21:02:29.527Z",
+        "reason": "user confirmed 2026-10-14: keep card side accent as is"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "ch09/index.html"
+        ],
+        "createdAt": "2026-10-13T21:23:45.829Z",
+        "reason": "user confirmed 2026-10-14: keep card side accent as is"
+      }
+    ]
+  }
+}
