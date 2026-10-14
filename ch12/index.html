@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Эукариоты против бактерий: что общего и что иначе — ДНК и её копирование</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d2b27'/%3E%3Cpath d='M12 24H52M12 34H52' stroke='%23ece8dc' stroke-width='6'/%3E%3Cpath d='M12 44H52' stroke='%23f0b45a' stroke-width='6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<!-- impeccable ignore-value side-tab: the card side accent in ../lib/engine.css is kept on purpose (owner confirmed 2026-10-14) -->
+<script src="../lib/engine.js"></script>
+<script src="../lib/bio.js"></script>
+<script src="audio/ru/timings.js"></script>
+<script>
+'use strict';
+const CHAPTER = { number: 12, title: 'Эукариоты против бактерий: что общего и что иначе', minutes: 14, language: 'ru', next: null };
+
+/* ---------- chapter drawing helpers (shared ones: lib/bio.js — bubble, oriMark, fork, dsIcon, betaRing, clampSide, dnaBRing, twistRing, enzyme) ---------- */
+const NB = ' ';
+const endLab = (p, str, x, y, t0, fill = COL.chalk) => say(p, str, x, y, t0, { size: 30, weight: 700, fill });
+const line = (p, str, x, y, t0, fill = COL.chalk, size = 28, anchor = 'start', weight = 600) => say(p, str, x, y, t0, { size, fill, anchor, weight });
+// a protein body shown at once inside a group that fades as a whole
+const PB = (p, lab, x, y, w, h, size) => put(enzyme(p, lab, x, y, null, { w, h, size }), { o: 1 });
+const COL_B = COL.whole, COL_E = COL.nat;   // bacteria: blue, eukaryotes: salmon (the same on every time bar)
+
+/* ---------- the one time scale of the chapter: minutes, 0…60 across x 160…1440 ---------- */
+const RXM = min => 160 + min * 1280 / 60;
+function timeRuler(p, y, t0) {
+  const g = G(p, { o: 0 });
+  path(g, `M160 ${y}H1440`, { stroke: COL.dim, 'stroke-width': 4 });
+  for (let k = 0; k <= 6; k++) {
+    path(g, `M${RXM(k * 10)} ${y - 9}V${y + 9}`, { stroke: COL.dim, 'stroke-width': 3 });
+    T(g, String(k * 10), { x: RXM(k * 10), y: y + 42, size: 24, fill: COL.dim, anchor: 'middle' });
+  }
+  T(g, 'минуты', { x: 1510, y: y + 42, size: 22, fill: COL.dim, anchor: 'middle' });
+  show(g, t0);
+  return g;
+}
+const bar = (p, x, y, h, col) => mk('rect', { x, y, width: 0, height: h, rx: 8, fill: col }, p);
+const grow = (r, w, t0, dur) => prog(q => r.setAttribute('width', (w * q).toFixed(1)), t0, dur, io);
+// a counter that runs 0 → n (text only)
+const count = (e, n, t0, dur, fmt = v => String(Math.round(v))) => prog(q => { e.textContent = fmt(n * q); }, t0, dur, io);
+const grp = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, NB);
+
+/* ---------- the genome ribbon: one long double strand and 44 pieces of ≈ 50 origins each (schematic) ---------- */
+const NCH = 44, CW = 1300 / NCH;
+function genomeRibbon(p, y, o0) {
+  const ic = dsIcon(p, 800, y, 'old', 'old', null, { w: 1300, gap: 30, sw: 10 });
+  const ch = Array.from({ length: NCH }, (_, i) => put(mk('rect', { x: 150 + i * CW + 1, y: y - 34, width: CW - 2, height: 68, rx: 6, fill: DNA, 'fill-opacity': .85 }, p), { o: o0 }));
+  return { ic, ch };
+}
+
+/* ---------- a pair of forks: bacteria on the left (fx 330), eukaryotes on the right (fx 1130); rings go on layers pb (behind) and pf (in front) ---------- */
+const FKY = 400;
+function fkPair(p, side, o = {}) {
+  const fx = side ? 1130 : 330, pb = G(p);
+  const fk = fork(p, fx, FKY, .3, { xEnd: fx + 410, A: 30, P: 80, n: 4, back: 240, spread: 100, hel: null, ...o }), pf = G(p);
+  return { pb, fk, pf, fx, yT: x => fk.rail(-1, x, fx), yB: x => fk.rail(1, x, fx) };
+}
+const sideTitles = (p, t0 = .3) => { line(p, 'бактерии', 400, 120, t0, COL_B, 34, 'middle', 700); line(p, 'эукариоты', 1200, 120, t0, COL_E, 34, 'middle', 700); };
+// a protein chip tinted differently from the usual pink (CMG blocks)
+const PB3 = (p, lab, x, y, w, col) => { const e = PB(p, lab, x, y, w, 40, 22); e.firstChild.setAttribute('fill', mix(COL.board, col, .35)); e.firstChild.setAttribute('stroke', col); e.lastChild.setAttribute('fill', col); return e; };
+const CMG_COL = [PROT, mix(PROT, COL.chalk, .55), mix(PROT, COL.whole, .55)];
+
+/* ---------- a tile of the "what stays the same" beat ---------- */
+const TW_ = 450, TH_ = 240;
+function tileBox(p, i, title, chap, draw) {
+  const x = 95 + (i % 3) * 480, y = 50 + Math.floor(i / 3) * 270, g = G(p, { o: 0 }), cx = x + TW_ / 2, cy = y + 150;
+  mk('rect', { x, y, width: TW_, height: TH_, rx: 18, fill: CARD, stroke: COL.dim, 'stroke-width': 2.5 }, g);
+  T(g, title, { x: x + 22, y: y + 44, size: 26, fill: COL.chalk, weight: 700 });
+  T(g, chap, { x: x + TW_ - 20, y: y + 44, size: 24, fill: COL.dim, weight: 600, anchor: 'end' });
+  draw(g, cx, cy);
+  return g;
+}
+// a protein pair for the "but" part: the bacterial protein, a sign, the eukaryotic one
+function pairBox(p, cx, a, b, same) {
+  const g = G(p, { o: 0 });
+  PB(g, a, cx, 665, 340, 50, 24); PB(g, b, cx, 805, 340, 50, 24);
+  const s = G(g, { x: cx, y: 735 });
+  T(s, same ? '=' : '≈', { y: 20, size: 58, fill: same ? OK : NO, weight: 700, anchor: 'middle' });
+  if (!same) path(s, 'M-26 24L26 -24', { stroke: NO, 'stroke-width': 7 });
+  return g;
+}
+
+/* ---------- beats: [id, title, run(m, D), { ask }?] ---------- */
+const BEATS = [
+  ['intro', 'Эукариоты против бактерий', (m, D) => {
+    const g = G(scene, { o: 0, y: 24 });
+    T(g, 'Раздел 3 «Эукариотическая вилка» · Глава 12', { x: 800, y: 330, size: 28, fill: COL.dim, anchor: 'middle' });
+    T(g, 'Эукариоты против бактерий', { x: 800, y: 440, size: 70, weight: 600, anchor: 'middle' });
+    tw(g, { o: 1, y: 0 }, .2, 1.1, out);
+    const r = say(scene, 'что общего и что иначе', 800, 540, m('sub'), { size: 36, fill: COL.dim });
+    tw(g, { o: 0, y: -24 }, D - .9, .8); hide(r, D - .9, .8);
+  }],
+
+  ['ecoli', 'Кишечная палочка: 38 минут', (m) => {
+    const p = panel(0), cx = 300, cy = 290, R = 95;
+    const bc = bubble(p, cx, cy, R, .3, { two: true, sep: 16 });
+    oriMark(p, cx, cy, R, .5, 'oriC');
+    say(p, '4,6·10⁶ п.н.', cx, cy + 10, .5, { size: 26, fill: COL.dim });
+    prog(u => bc.set(160 * u), m('forks'), 6, io);
+    pill(p, 'каждая вилка ≈ 1000 нт/с', COL_B, cx, 470, m('forks'), 26);
+    pill(p, 'вместе 2000 нт/с', COL_B, cx, 535, m('forks', 1.4), 26);
+    colorLine(p, [['4 600 000 / 2000 = '], ['2300 с', COL_B]], 1010, 290, m('calc'), { size: 48 });
+    const r = bar(p, 160, 688, 44, COL_B); grow(r, RXM(38) - 160, m('calc', .6), 5);
+    timeRuler(p, 760, .3);
+    line(p, '≈ 38 минут', RXM(38) + 18, 722, m('min'), COL_B, 36, 'start', 700);
+    pill(p, 'опыт это подтверждает', OK, 1010, 400, m('min', 1.5), 28);
+  }],
+
+  ['human', 'Человек: два года на одной паре вилок', (m) => {
+    const p = panel(0), fx = 900;
+    const fk = fork(p, fx, 250, .3, { xEnd: 1180, A: 24, P: 64, n: 4, back: 240, spread: 70, hel: 'вилка' });
+    pill(p, 'клетка человека', COL_E, 340, 90, .3, 28);
+    // genome sets
+    const a = dsIcon(p, 270, 170, 'old', 'old', null, { w: 220, gap: 20 }), b = dsIcon(p, 270, 222, 'old', 'old', null, { w: 220, gap: 20 });
+    put(a, { o: 0 }); put(b, { o: 0 }); show(a, m('gen'));
+    const g1 = line(p, 'гаплоидный набор ≈ 3,2·10⁹ п.н.', 160, 290, m('gen'), COL.chalk, 24, 'start', 600);
+    show(b, m('gen', 3.2));
+    hide(g1, m('gen', 3.0), .3);
+    line(p, '≈ 6,4·10⁹ п.н., а не 3,2·10⁹', 160, 290, m('gen', 3.4), COL_E, 26, 'start', 700);
+    line(p, 'две копии: клетка диплоидна', 160, 330, m('gen', 3.8), COL.dim, 22, 'start', 500);
+    // fork speed
+    fk.to(1000, m('speed'), 4);
+    pill(p, 'вилка ≈ 50 нт/с', COL_E, 1400, 200, m('speed'), 26);
+    pill(p, 'вместе 100 нт/с', COL_E, 1400, 270, m('speed', 1.2), 26);
+    colorLine(p, [['6,4·10⁹ / 100 = '], ['6,4·10⁷ с', COL_E]], 800, 440, m('calc'), { size: 48 });
+    timeRuler(p, 760, .3);
+    const gh = bar(p, 160, 688, 44, COL_B); grow(gh, RXM(38) - 160, m('calc'), .8);
+    line(p, 'E. coli ≈ 38 минут', RXM(38) + 18, 722, m('calc', .6), COL_B, 28, 'start', 700);
+    const hb = bar(p, 160, 628, 44, COL_E); grow(hb, 1380, m('days'), 2.2);
+    const arr = arrowTo(p, 1440, 650, 1560, 650, COL_E, m('days', 2));
+    line(p, '≈ 740 суток ≈ 2 года', 800, 598, m('days'), COL_E, 36, 'middle', 700);
+    const hp = line(p, 'один гаплоидный набор ≈ 370 суток', 800, 552, m('haploid'), COL.chalk, 28, 'middle', 600);
+    pill(p, 'S-фаза ≈ 8 ч', COL.int, 1350, 592, m('real'), 26);
+    pill(p, 'нужно много вилок сразу', DNA, 800, 488, m('idea'), 30);
+  }],
+
+  ['origins', 'Сколько ориджинов нужно', (m) => {
+    const p = panel(0), y = 300, { ch } = genomeRibbon(p, y, 0);
+    colorLine(p, [['8 ч · 3600 = '], ['28 800 с', COL.int]], 800, 140, m('sec'), { size: 46 });
+    line(p, 'геном человека ≈ 6,4·10⁹ п.н.', 800, 215, m('sec'), COL.dim, 26, 'middle', 600);
+    tw(ch[0], { o: 1 }, m('one'), .5);
+    line(p, 'один ориджин', 165, 372, m('one'), DNA, 24, 'middle', 700);
+    colorLine(p, [['100 нт/с · 28 800 с ≈ '], ['2,9·10⁶ п.н.', DNA]], 800, 420, m('one', .4), { size: 40 });
+    const cnt = T(p, '0', { x: 800, y: 545, size: 96, fill: DNA, weight: 700, anchor: 'middle', o: 0 }); show(cnt, m('div'));
+    line(p, 'ориджинов', 800, 595, m('div'), COL.dim, 28, 'middle', 600);
+    count(cnt, 2200, m('div') + .8, 5.6);
+    ch.slice(1).forEach((r, i) => tw(r, { o: 1 }, m('div') + .8 + 5.6 * (i + 1) / NCH, .3));
+    line(p, 'условно: полоса — 44 куска, в каждом ≈ 50 ориджинов', 800, 252, m('div'), COL.dim, 22, 'middle', 500);
+    colorLine(p, [['6,4·10⁹ / 2,9·10⁶ ≈ '], ['2200', DNA]], 800, 665, m('div', 7), { size: 44 });
+    // the time bar squeezes from two years to eight hours
+    const tb = bar(p, 160, 705, 30, COL_E), tl = T(p, '≈ 740 суток', { x: 1470, y: 731, size: 30, fill: COL_E, weight: 700, anchor: 'end', o: 0 });
+    put(tb, { o: 0 }); show(tb, m('div'), .4); show(tl, m('div'), .4); tb.setAttribute('width', 1280);
+    prog(q => { const w = 1280 - 1270 * q; tb.setAttribute('width', w.toFixed(1)); put(tl, { x: 160 + w + 16 }); tl.setAttribute('text-anchor', 'start'); tl.textContent = q >= 1 ? '8 ч' : '≈ 740 суток'; }, m('div') + .8, 5.6, io);
+    pill(p, 'при 25 нт/с вдвое больше: ≈ 4400', NO, 800, 830, m('slow'), 30);
+  }],
+
+  ['q1', 'Быстрая проверка', () => {
+    const p = panel(0), { ch } = genomeRibbon(p, 200, .22);
+    say(p, 'геном человека · S-фаза 8 ч · вилка ≈ 50 нт/с', 800, 110, .2, { size: 30, fill: COL.dim, weight: 600 });
+    say(p, 'сколько ориджинов нужно минимум?', 800, 340, .3, { size: 40, fill: DNA, weight: 700 });
+    line(p, '6,4·10⁹ п.н., две вилки на ориджин', 800, 410, .3, COL.chalk, 28, 'middle', 500);
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-ori', prompt: ['Сколько ориджинов нужно человеку минимум, чтобы уложиться в 8 часов? Введите число.'],
+    build: blanks([{ parts: ['Ориджинов: ', { box: '2200' }], test: v => v[0] >= 2100 && v[0] <= 2300,
+      why: '6,4·10⁹ / 2,9·10⁶ ≈ 2200: один ориджин с двумя вилками за 28 800 с копирует ≈ 2,9·10⁶ п.н.',
+      hint: 'Геном 6,4·10⁹ делите на то, что копирует один ориджин за S-фазу (≈ 2,9·10⁶). Вышло 4400 — это при 25 нт/с; 1100 — забыли про вторую вилку.' }]),
+  }], done) }],
+
+  ['reserve', 'Запас ориджинов', (m) => {
+    const p = panel(0), y = 250, LX = n => 160 + (Math.log10(n) - 2) / 3 * 1280;
+    path(p, `M160 ${y}H1440`, { stroke: COL.dim, 'stroke-width': 4 });
+    [[100, '100'], [1000, '1000'], [10000, '10 000'], [100000, '100 000']].forEach(([n, s]) => {
+      path(p, `M${LX(n)} ${y - 9}V${y + 9}`, { stroke: COL.dim, 'stroke-width': 3 }); T(p, s, { x: LX(n), y: y + 42, size: 24, fill: COL.dim, anchor: 'middle' });
+    });
+    line(p, 'число ориджинов · шкала сжата (логарифмическая)', 800, 332, .3, COL.dim, 24, 'middle', 500);
+    const dot = (x, col, t) => { const e = G(p, { x, y, o: 0 }); mk('circle', { r: 13, fill: col, stroke: COL.board, 'stroke-width': 3 }, e); show(e, t); };
+    dot(LX(2200), COL.int, .3); line(p, '≈ 2200 минимум', LX(2200), y - 40, .3, COL.int, 26, 'middle', 700);
+    const rg = mk('rect', { x: LX(30000), y: y - 12, width: LX(50000) - LX(30000), height: 24, rx: 12, fill: COL_E }, p); put(rg, { o: 0 }); show(rg, m('hum'));
+    line(p, '30–50 тыс. у человека', (LX(30000) + LX(50000)) / 2, y - 40, m('hum'), COL_E, 26, 'middle', 700);
+    dot(LX(400), COL_B, m('yeast')); line(p, '≈ 400 у дрожжей', LX(400), y - 40, m('yeast'), COL_B, 26, 'middle', 700);
+    arrowTo(p, LX(2200) + 22, y + 125, LX(30000) - 10, y + 125, COL.int, m('ratio'));
+    pill(p, 'запас 14–23 раза', COL.int, (LX(2200) + LX(30000)) / 2, y + 175, m('ratio'), 30);
+    // early and late origins: filled = fired, dashed = licensed but kept in reserve
+    const rows = [[500, 'ранние: начало S-фазы', COL.int, m('why')], [620, 'поздние: конец S-фазы', mix(COL.int, COL.board, .55), m('why', 4)]];
+    rows.forEach(([ry, lab, col, t0], r) => {
+      line(p, lab, 160, ry - 42, t0, col, 24, 'start', 700);
+      for (let i = 0; i < 14; i++) {
+        const e = G(p, { x: 200 + i * 92, y: ry, o: 0 });
+        const dorm = (r === 0 && (i === 3 || i === 9)) || (r === 1 && (i === 5 || i === 11));
+        const f = mk('circle', { r: 20, fill: col, stroke: col, 'stroke-width': 3 }, e);
+        tw(e, { o: 1 }, t0 + i * .12, .35);
+        if (dorm) { const d = mk('circle', { r: 20, fill: COL.board, stroke: col, 'stroke-width': 3, 'stroke-dasharray': '7 6' }, e); put(d, { o: 0 }); show(d, m('dorm') + (r + i / 14) * .8, .5); }
+      }
+    });
+    pill(p, 'пунктир: лицензированы, но не запускаются, это резерв', COL.chalk, 800, 745, m('dorm'), 28);
+    pill(p, 'ориджины включаются по расписанию, а не разом', DNA, 800, 840, m('why', 8), 28);
+  }],
+
+  ['common', 'Что осталось общим', (m) => {
+    const p = panel(0), ts = [];
+    const sm = (g, cx, cy, top, bot, dx = 0) => dsIcon(g, cx + dx, cy, top, bot, null, { w: 110, gap: 22 });
+    ts.push(tileBox(p, 0, 'полуконсервативность', 'гл. 6', (g, cx, cy) => {
+      sm(g, cx, cy, 'old', 'old', -120);
+      path(g, `M${cx - 50} ${cy}H${cx + 10}`, { stroke: COL.dim, 'stroke-width': 4 });
+      sm(g, cx, cy - 34, 'old', 'new', 100); sm(g, cx, cy + 34, 'new', 'old', 100);
+    }));
+    ts.push(tileBox(p, 1, 'две вилки от ориджина', 'гл. 7', (g, cx, cy) => { const b = bubble(g, cx, cy + 12, 74, null, { two: true, sep: 14 }); b.set(100); }));
+    ts.push(tileBox(p, 2, 'две цепи по-разному', 'гл. 7', (g, cx, cy) => {
+      fork(g, cx - 20, cy + 10, null, { xEnd: cx + 200, A: 14, P: 40, n: 3, back: 150, spread: 40, hel: null, lead: cx - 170, fr: [[cx - 70, cx - 135, 8]] });
+    }));
+    ts.push(tileBox(p, 3, 'РНК-праймер', 'гл. 7', (g, cx, cy) => {
+      path(g, `M${cx - 170} ${cy + 18}H${cx + 170}`, { stroke: COL.chalk, 'stroke-width': 8 });
+      path(g, `M${cx - 170} ${cy - 14}H${cx - 90}`, { stroke: RNA, 'stroke-width': 10 });
+      path(g, `M${cx - 90} ${cy - 14}H${cx + 110}`, { stroke: DNA, 'stroke-width': 8 });
+      T(g, 'РНК', { x: cx - 130, y: cy - 34, size: 22, fill: RNA, weight: 700, anchor: 'middle' });
+      T(g, 'ДНК', { x: cx + 10, y: cy - 34, size: 22, fill: DNA, weight: 700, anchor: 'middle' });
+    }));
+    ts.push(tileBox(p, 4, 'скользящий зажим', 'гл. 9', (g, cx, cy) => betaRing(g, cx, cy + 14, null, { s: .33 })));
+    ts.push(tileBox(p, 5, 'топоизомеразы', 'гл. 5', (g, cx, cy) => twistRing(g, cx, cy + 14, null, { A: 100, B: 50, nu: 1, twist: 8, w: 9, sw: 5, K: 320 })));
+    ts.forEach((t, i) => show(t, m('t' + (i + 1)), .5));
+    // the proteins are not the same
+    const pr = [['Pol III', 'Pol δ, Pol ε', 0], ['DnaB', 'MCM2-7', 0], ['DnaG', 'Pol α/праймаза', 0], ['β, загрузчик τ₃, гираза', 'PCNA, RFC, Topo II', 1]];
+    const but = [0, 1, 2, 3].map(i => pairBox(p, 200 + i * 400, pr[i][0], pr[i][1], pr[i][2]));
+    but.forEach((b, i) => show(b, m('but') + 1 + i * 1.5, .5));
+    ts.forEach(t => tw(t, { o: .3 }, m('but'), .6));
+    line(p, 'белки: бактерии ↔ эукариоты', 800, 618, m('but'), COL.dim, 26, 'middle', 600);
+  }],
+
+  ['fork', 'Хеликаза: другая цепь, другое направление', (m) => {
+    const p = panel(0), L = fkPair(p, 0, { lead: 120 }), R = fkPair(p, 1, { lead: 920 });
+    sideTitles(p);
+    [L, R].forEach(({ fx }) => { endLab(p, '3′', fx - 262, FKY - 100, .5); endLab(p, '5′', fx - 262, FKY + 108, .5); });
+    // same direction
+    [L, R].forEach(({ fx }) => { arrowTo(p, fx - 230, 190, fx - 20, 190, COL.int, m('same')); line(p, 'хеликаза идёт к вилке', fx - 125, 166, m('same'), COL.int, 24, 'middle', 700); });
+    // DnaB on the lagging template
+    const rb = clampSide(L.pb, L.pf, L.fx - 60, L.yB(L.fx - 60), null, { rx: 16, ry: 28, sw: 9 }); put(rb.bk, { o: 0 }); put(rb.fr, { o: 0 }); rb.show(m('dnab'), .5);
+    const dn = PB(p, 'DnaB', L.fx - 60, L.yB(L.fx - 60) + 70, 100, 44, 24); put(dn, { o: 0 }); show(dn, m('dnab'), .4);
+    pill(p, 'DnaB: матрица отстающей цепи, 5′→3′', COL_B, L.fx, 640, m('dnab', 1), 26);
+    // CMG on the leading template
+    const rc = clampSide(R.pb, R.pf, R.fx - 60, R.yT(R.fx - 60), null, { rx: 16, ry: 28, sw: 9 }); put(rc.bk, { o: 0 }); put(rc.fr, { o: 0 }); rc.show(m('cmg'), .5);
+    [['Cdc45', R.fx - 190, 96], ['MCM2-7', R.fx - 70, 120], ['GINS', R.fx + 34, 84]].forEach(([lab, x, w], i) => { const e = PB3(p, lab, x, R.yT(R.fx - 60) - 140, w, CMG_COL[i]); put(e, { o: 0 }); show(e, m('cmg', .2 + i * .3), .4); });
+    const lk = path(p, `M${R.fx - 60} ${R.yT(R.fx - 60) - 118}V${R.yT(R.fx - 60) - 34}`, { stroke: PROT, 'stroke-width': 4, 'stroke-dasharray': '6 6' }); put(lk, { o: 0 }); show(lk, m('cmg', 1), .4);
+    pill(p, 'CMG: матрица лидирующей цепи, 3′→5′', COL_E, R.fx, 640, m('cmg', 1.2), 26);
+    arrowTo(p, R.fx - 40, FKY + 36, R.fx - 130, FKY + 130, NO, m('cmg', 4));
+    line(p, 'вторую цепь кольцо выталкивает', R.fx - 120, FKY + 160, m('cmg', 4), NO, 22, 'middle', 600);
+    // check
+    const hl = path(p, 'M' + Array.from({ length: 40 }, (_, i) => { const x = R.fx - 240 + i * 6; return `${x} ${R.yT(x)}`; }).join('L'), { stroke: COL.int, 'stroke-width': 6, opacity: .85 }); put(hl, { o: 0 }); show(hl, m('check'), .5);
+    line(p, 'полимераза читает эту матрицу 3′→5′ и хеликаза идёт туда же', R.fx, 700, m('check', 1.5), COL.chalk, 26, 'middle', 600);
+  }],
+
+  ['q2', 'Быстрая проверка', () => {
+    const p = panel(0), fx = 800, pb = G(p), fk = fork(p, fx, 380, .3, { xEnd: 1210, A: 30, P: 80, n: 4, back: 240, spread: 100, hel: null, lead: 600 }), pf = G(p);
+    line(p, 'вилка эукариот', 800, 150, .3, COL_E, 34, 'middle', 700);
+    endLab(p, '3′', fx - 262, 280, .5); endLab(p, '5′', fx - 262, 488, .5);
+    const yT = fk.rail(-1, fx - 60, fx), fog = mk('ellipse', { cx: fx - 60, cy: yT, rx: 18, ry: 34, fill: 'none', stroke: PROT, 'stroke-width': 7, 'stroke-dasharray': '6 8', opacity: .8 }, p);
+    T(p, '?', { x: fx - 60, y: yT - 48, size: 40, fill: PROT, weight: 700, anchor: 'middle' });
+    line(p, 'кольцо CMG надето на одну из матриц', 800, 590, .5, COL.dim, 28, 'middle', 600);
+    S.picks = [{ el: fog, box: [fx - 250, 270, 260, 100], label: 'верхняя матрица' }, { el: fog, box: [fx - 250, 395, 260, 120], label: 'нижняя матрица' }];
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-cmg', prompt: ['На какую цепь надето кольцо CMG? Нажмите на неё.'],
+    build: pickEls(S.picks, 0, 'На матрицу лидирующей цепи: CMG идёт по ней 3′→5′, а вторую цепь выталкивает наружу.',
+      () => 'Нижняя матрица отстающей цепи: по ней идёт DnaB, не CMG.'),
+  }], done) }],
+
+  ['mcm', 'Загрузка и запуск: секунды против часов', (m) => {
+    const p = panel(0), y = 330;
+    sideTitles(p);
+    // eukaryotes: the MCM2-7 double hexamer, inactive until Cdc45 and GINS join
+    const pb = G(p);
+    [y - 8, y + 8].forEach(yy => path(p, `M880 ${yy}H1540`, { stroke: COL.chalk, 'stroke-width': 6 }));
+    const pf = G(p), dim = mix(COL.board, PROT, .5);
+    const mk2 = col => [1150, 1206].map(x => { const c = clampSide(pb, pf, x, y, null, { rx: 20, ry: 54, col, sw: 11 }); put(c.bk, { o: 0 }); put(c.fr, { o: 0 }); return c; });
+    const off = mk2(dim), on = mk2(PROT);
+    off.forEach(c => c.show(m('load'), .6)); on.forEach(c => c.show(m('cdc', 1.8), .6)); off.forEach(c => c.hide(m('cdc', 1.8), .6));
+    line(p, 'двойной гексамер MCM2-7', 1178, 225, m('ring'), COL.dim, 26, 'middle', 700);
+    const ina = pill(p, 'неактивен', COL.dim, 1178, 430, m('load', 1), 26); hide(ina, m('cdc', 1.6), .3);
+    const c45 = PB3(p, 'Cdc45', 1500, 260, 100, CMG_COL[1]), gi = PB3(p, 'GINS', 1500, 400, 90, CMG_COL[2]); put(c45, { o: 0 }); put(gi, { o: 0 });
+    show(c45, m('cdc'), .3); show(gi, m('cdc', .3), .3);
+    tw(c45, { x: 1500 - 190, y: 260 - 40 + 62 }, m('cdc', .6), 1.1, io); tw(gi, { x: 1500 - 190, y: 400 - 40 }, m('cdc', .9), 1.1, io);
+    const cm = pill(p, 'CMG: мотор включён', OK, 1178, 470, m('cdc', 2), 28); pulse(on[0].fr, m('cdc', 2), 1.1);
+    // timeline G1 → S
+    path(p, 'M880 700H1540', { stroke: COL.dim, 'stroke-width': 4 });
+    const dg = G(p, { x: 920, y: 700, o: 0 }), ds = G(p, { x: 1500, y: 700, o: 0 });
+    mk('circle', { r: 12, fill: DNA }, dg); mk('circle', { r: 12, fill: COL.int }, ds);
+    line(p, 'G1', 920, 750, m('load'), COL.dim, 26, 'middle', 700); line(p, 'S', 1500, 750, m('load'), COL.dim, 26, 'middle', 700);
+    show(dg, m('load')); show(ds, m('cdc'));
+    hBracket(p, 920, 1500, 700, 'часы', COL_E, m('hours'), { up: true, size: 32 });
+    line(p, 'лицензия: загрузка', 920, 800, m('load'), DNA, 22, 'start', 600); line(p, 'запуск', 1500, 800, m('cdc'), COL.int, 22, 'end', 600);
+    // bacteria: DnaB on a single strand, seconds
+    const hx = 400, hy = 330, hex = dnaBRing(p, hx, hy, null, { s: .42 }); put(hex, { o: 0 }); show(hex, m('dnab'), .6);
+    const cd = G(p, { x: hx + 130, y: hy - 150, o: 0 }); mk('circle', { r: 9, fill: COL.chalk }, cd); show(cd, m('dnab', .3), .3); tw(cd, { x: hx, y: hy }, m('dnab', .6), 1.4, io);
+    line(p, 'одиночная цепь', hx, hy - 118, m('dnab', .6), COL.chalk, 22, 'middle', 600);
+    pill(p, 'DnaB садится на одиночную цепь', COL_B, hx, 520, m('dnab', 1.2), 26);
+    const ax = path(p, 'M80 700H760', { stroke: COL.dim, 'stroke-width': 4 }); put(ax, { o: 0 }); show(ax, m('dnab', 1));
+    const bg = G(p, { x: 130, y: 700, o: 0 }), bs = G(p, { x: 330, y: 700, o: 0 }); mk('circle', { r: 12, fill: DNA }, bg); mk('circle', { r: 12, fill: COL.int }, bs);
+    show(bg, m('dnab', 1)); show(bs, m('dnab', 2));
+    hBracket(p, 130, 330, 700, 'секунды', COL_B, m('dnab', 2.2), { up: true, size: 32 });
+    line(p, 'загрузка', 130, 750, m('dnab', 1), DNA, 22, 'middle', 600); line(p, 'запуск', 330, 750, m('dnab', 2), COL.int, 22, 'middle', 600);
+  }],
+
+  ['okazaki', 'Фрагменты Оказаки: 3000 против 4·10⁷', (m) => {
+    const p = panel(0), x0 = 200, W = 1100;
+    const rib = (y, n, col, t) => {
+      path(p, `M${x0} ${y}H${x0 + W}`, { stroke: COL.chalk, 'stroke-width': 7 });
+      const seg = W / n, e = path(p, `M${x0} ${y + 17}H${x0 + W}`, { stroke: col, 'stroke-width': 9, 'stroke-linecap': 'butt', 'stroke-dasharray': `${(seg * .74).toFixed(2)} ${(seg * .26).toFixed(2)}` });
+      put(e, { o: 0 }); show(e, t);
+    };
+    line(p, 'бактерии', x0, 150, .3, COL_B, 28, 'start', 700); line(p, 'фрагмент 1000–2000 нт', x0 + 190, 150, m('len'), COL.dim, 26, 'start', 600);
+    line(p, 'человек', x0, 380, .3, COL_E, 28, 'start', 700); line(p, 'фрагмент 100–200 нт', x0 + 190, 380, m('len', 2), COL.dim, 26, 'start', 600);
+    rib(205, 60, DNA, m('ec', -4)); rib(435, 600, DNA, m('hs', -4));
+    line(p, 'ленты одной длины; куски на верхней условны', 800, 585, m('tot'), COL.dim, 22, 'middle', 500);
+    const c1 = T(p, '≈ 3000', { x: 1560, y: 232, size: 56, fill: COL_B, weight: 700, anchor: 'end', o: 0 }), c2 = T(p, '≈ 4·10⁷', { x: 1560, y: 462, size: 56, fill: COL_E, weight: 700, anchor: 'end', o: 0 });
+    show(c1, m('ec')); show(c2, m('hs'));
+    colorLine(p, [['4,6·10⁶ / 1500 ≈ 3000']], 800, 295, m('ec'), { size: 38 });
+    colorLine(p, [['6,4·10⁹ / 150 ≈ 4·10⁷']], 800, 525, m('hs'), { size: 38 });
+    pill(p, 'в 10 000+ раз больше', NO, 800, 650, m('x'), 36);
+    ['праймер', 'удаление праймера', 'заполнение', 'сшивание'].forEach((s, i) => {
+      pill(p, s, i < 3 ? PROT : COL.int, 250 + i * 365, 790, m('each', i * .45), 26);
+      if (i) line(p, '→', 250 + i * 365 - 182, 800, m('each', i * .45), COL.dim, 34, 'middle', 700);
+    });
+    line(p, 'для каждого фрагмента', 800, 730, m('each'), COL.dim, 24, 'middle', 600);
+  }],
+
+  ['primer', 'Праймер эукариот: РНК + ДНК', (m) => {
+    const p = panel(0), x0 = 260, k = 36;   // 36 px per nucleotide: 30 nt = 1080 px
+    path(p, `M${x0} 290H${x0 + 30 * k}`, { stroke: COL.chalk, 'stroke-width': 8 });
+    path(p, `M${x0} 250H${x0 + 10 * k}`, { stroke: RNA, 'stroke-width': 12 }); path(p, `M${x0 + 10 * k} 250H${x0 + 30 * k}`, { stroke: DNA, 'stroke-width': 9 });
+    endLab(p, '5′', x0 - 30, 258, .3); endLab(p, '3′', x0 + 30 * k + 30, 258, .3); endLab(p, '3′', x0 - 30, 298, .3); endLab(p, '5′', x0 + 30 * k + 30, 298, .3);
+    hBracket(p, x0, x0 + 10 * k, 210, 'РНК ≈ 10 нт', RNA, m('pa'), { up: true, size: 26 });
+    hBracket(p, x0 + 10 * k, x0 + 30 * k, 210, 'ДНК ≈ 20 нт', DNA, m('pa', 1.8), { up: true, size: 26 });
+    pill(p, 'Pol α/праймаза: ≈ 30 нт', PROT, 800, 120, m('pa'), 28);
+    colorLine(p, [['4·10⁷ · 30 = '], ['1,2·10⁹ нт ≈ 19 %', DNA]], 800, 400, m('mul'), { size: 42 });
+    const W = 1200, bx = 200, by = 440;
+    mk('rect', { x: bx, y: by, width: W, height: 44, rx: 10, fill: 'none', stroke: COL.chalk, 'stroke-width': 3 }, p);
+    const fill = mk('rect', { x: bx, y: by, width: 0, height: 44, rx: 10, fill: DNA }, p); grow(fill, W * .19, m('mul', 2), 1.5);
+    line(p, 'отстающие цепи ≈ 6,4·10⁹ нт', bx, by + 76, m('mul'), COL.dim, 24, 'start', 600);
+    line(p, 'пятая часть', bx + W * .095, by + 30, m('mul', 3.4), COL.board, 24, 'middle', 700);
+    const noex = pill(p, 'у Pol α нет корректора', NO, 400, 600, m('noex'), 28);
+    pill(p, '≈ 1,5 % остаётся в геноме', COL.int, 1150, 600, m('noex', 3.5), 28);
+    line(p, 'эукариоты', 160, 710, m('rem'), COL_E, 26, 'start', 700); line(p, 'Pol δ + FEN1, DNA2 в запасе', 400, 710, m('rem'), COL.chalk, 28, 'start', 700);
+    line(p, 'бактерии', 160, 780, m('rem', 2.5), COL_B, 26, 'start', 700); line(p, 'один фермент: Pol I', 400, 780, m('rem', 2.5), COL.chalk, 28, 'start', 700);
+  }],
+
+  ['pols', 'Полимеразы: специализация', (m) => {
+    const p = panel(0), L = fkPair(p, 0, { lead: 130, fr: [[270, 150, 12]] }), R = fkPair(p, 1, { lead: 930, fr: [[1070, 950, 12]] });
+    sideTitles(p);
+    const ch = (lab, x, y, t, w = 100, col = PROT) => { const e = PB(p, lab, x, y, w, 44, 24); put(e, { o: 0 }); show(e, t, .4); return e; };
+    const above = (Q, x) => Q.yT(x) - 66, below = (Q, x) => Q.yB(x) + 64;
+    ch('Pol III', 280, above(L, 280), m('ec'), 110); ch('Pol III', 170, below(L, 170), m('ec', .4), 110); ch('Pol I', 300, below(L, 300) , m('ec', 1.2), 90);
+    line(p, 'один фермент на обеих цепях; Pol I чистит праймеры', 400, 640, m('ec', 2), COL_B, 24, 'middle', 600);
+    ch('Pol α', 925, above(R, 925), m('hs'), 90); ch('Pol ε', 1070, above(R, 1070), m('hs', 1), 90);
+    ch('Pol α', 1095, below(R, 1095), m('hs', 1.6), 90); ch('Pol δ', 975, below(R, 975), m('hs', 2.2), 90);
+    line(p, 'три основные полимеразы', 1200, 640, m('hs', 3), COL_E, 24, 'middle', 600);
+    arrowTo(p, 975, above(R, 925), 1018, above(R, 1070), COL.int, m('switch'));
+    arrowTo(p, 1045, below(R, 1095), 1022, below(R, 975), COL.int, m('switch', .4));
+    pill(p, 'переключение полимераз · гл. 15', COL.int, 1130, 690, m('switch'), 26);
+    [1290, 1385, 1480].forEach((x, i) => { const e = PB(p, 'TLS', x, 215, 80, 40, 22); e.firstChild.setAttribute('fill', 'none'); e.firstChild.setAttribute('stroke', COL.dim); e.firstChild.setAttribute('stroke-dasharray', '6 5'); e.lastChild.setAttribute('fill', COL.dim); put(e, { o: 0 }); show(e, m('tls', i * .3), .4); });
+    line(p, 'обходят повреждения · гл. 13', 1385, 262, m('tls', .6), COL.dim, 22, 'middle', 600);
+    pill(p, 'больше специализации: больше точек координации на каждом из 4·10⁷ фрагментов', NO, 800, 820, m('cost'), 26);
+  }],
+
+  ['chrom', 'Хроматин: считаем гистоны', (m) => {
+    const p = panel(0);
+    sideTitles(p);
+    // bacterial nucleoid: a tangle with HU, IHF, Fis
+    path(p, 'M230 250C170 190 300 160 360 210C430 250 500 190 530 260C560 330 460 370 400 330C330 290 300 380 240 340C190 310 180 280 230 250Z', { stroke: COL.chalk, 'stroke-width': 7 });
+    [['HU', 190, 190], ['IHF', 560, 200], ['Fis', 470, 380]].forEach(([s, x, y], i) => { const e = PB(p, s, x, y, 76, 38, 22); put(e, { o: 0 }); show(e, m('bac', .4 + i * .4), .4); });
+    line(p, 'нуклеоид, нуклеосом нет', 380, 440, m('bac', 1.2), COL_B, 26, 'middle', 600);
+    // eukaryotic fibre with nucleosomes
+    path(p, 'M860 260H1540', { stroke: COL.chalk, 'stroke-width': 7 });
+    [960, 1100, 1240, 1380].forEach((x, i) => {
+      const e = G(p, { x, y: 260, o: 0 });
+      mk('circle', { r: 36, fill: mix(COL.board, PROT, .4), stroke: PROT, 'stroke-width': 3 }, e);
+      for (let j = 0; j < 8; j++) mk('circle', { cx: 17 * Math.cos(j * Math.PI / 4), cy: 17 * Math.sin(j * Math.PI / 4), r: 5, fill: PROT }, e);
+      mk('circle', { r: 46, fill: 'none', stroke: DNA, 'stroke-width': 7, 'stroke-dasharray': '230 60', transform: 'rotate(-60)' }, e);
+      tw(e, { o: 1 }, m('euk', .3 + i * .4), .4);
+    });
+    line(p, 'нуклеосома: ≈ 147 п.н. + 8 гистонов', 1200, 350, m('euk', 1.6), COL_E, 26, 'middle', 600);
+    line(p, 'период ≈ 190 п.н.', 1200, 392, m('euk', 2.6), COL.dim, 24, 'middle', 600);
+    colorLine(p, [['12,8·10⁹ / 190 ≈ '], ['6,7·10⁷ нуклеосом', COL_E]], 800, 500, m('n'), { size: 38 });
+    line(p, 'после S-фазы два диплоидных генома', 800, 455, m('n'), COL.dim, 24, 'middle', 500);
+    colorLine(p, [['половина новая ≈ '], ['3,4·10⁷ октамеров', DNA]], 800, 565, m('half'), { size: 38 });
+    colorLine(p, [['3,4·10⁷ / 28 800 с']], 800, 630, m('rate'), { size: 36 });
+    const cnt = T(p, '0', { x: 1010, y: 745, size: 92, fill: DNA, weight: 700, anchor: 'end', o: 0 }); show(cnt, m('rate', 1));
+    line(p, 'октамеров в секунду', 1040, 745, m('rate', 1), COL.chalk, 32, 'start', 600);
+    count(cnt, 1200, m('rate', 1.2), 3);
+    ['синтезировать', 'донести к вилке', 'посадить за вилкой'].forEach((s, i) => {
+      pill(p, s, PROT, 330 + i * 470, 850, m('log', i * .6), 26);
+      if (i) line(p, '→', 330 + i * 470 - 235, 858, m('log', i * .6), COL.dim, 34, 'middle', 700);
+    });
+  }],
+
+  ['ends', 'Концы хромосом', (m) => {
+    const p = panel(0);
+    sideTitles(p);
+    const cr = mk('circle', { cx: 400, cy: 400, r: 120, fill: 'none', stroke: COL.chalk, 'stroke-width': 9 }, p); put(cr, { o: 0 }); show(cr, m('ring'), .6);
+    line(p, 'кольцо: концов нет', 400, 590, m('ring', 1), COL_B, 28, 'middle', 600);
+    const x0 = 880, x1 = 1480, L = (y, col, w = 8, a = x0, b = x1) => path(p, `M${a} ${y}H${b}`, { stroke: col, 'stroke-width': w });
+    const g = G(p, { o: 0 });
+    path(g, `M${x0} 290H${x1}`, { stroke: COL.chalk, 'stroke-width': 8 }); path(g, `M${x0} 322H${x1}`, { stroke: DNA, 'stroke-width': 8 });
+    path(g, `M${x0} 430H${x1}`, { stroke: COL.chalk, 'stroke-width': 8 });
+    [[x0, 1090], [1100, 1260], [1270, 1440]].forEach(([a, b]) => path(g, `M${a} 398H${b}`, { stroke: DNA, 'stroke-width': 8 }));
+    show(g, m('line'), .6);
+    const pr = path(p, `M1440 398H${x1}`, { stroke: RNA, 'stroke-width': 11 }); put(pr, { o: 0 }); show(pr, m('line', .6), .4); hide(pr, m('prim', 2.5), .6);
+    [['5′', 290], ['3′', 322], ['5′', 398], ['3′', 430]].forEach(([s, y], i) => endLab(p, s, x1 + 30, y + 8, m('line', .6)));
+    line(p, 'линейная хромосома', 1180, 200, m('line'), COL_E, 28, 'middle', 600);
+    const br = hBracket(p, 1440, x1, 458, 'пробел', NO, m('prim', 3), { up: false, size: 24 });
+    line(p, 'заполнить нечем: нужна 3′-затравка', 1180, 540, m('prim', 3.5), COL.dim, 24, 'middle', 500);
+    pill(p, '≈ 50–100 п.н. за деление', NO, 1180, 610, m('loss'), 28);
+    pill(p, 'теломераза · главы 20–21', OK, 1180, 680, m('tel'), 28);
+    line(p, 'у Borrelia и Streptomyces хромосомы линейные: свои решения', 800, 820, m('exc'), COL.dim, 24, 'middle', 500);
+  }],
+
+  ['once', 'Один раз за цикл', (m) => {
+    const p = panel(0), cx = 300, cy = 285, R = 90;
+    // bacteria on top
+    const bc = bubble(p, cx, cy, R, .3, { two: true, sep: 16 });
+    oriMark(p, cx, cy, R, .5, 'oriC');
+    prog(u => bc.set(110 * u), m('multi') - 2, 6, io);
+    const eye = G(p, { o: 0 }); [-1, 1].forEach(s => path(eye, arcPoly(cx, cy, -30, 30, a => R + s * 24 * Math.cos(a * Math.PI / 60)), { stroke: DNA, 'stroke-width': 6 })); show(eye, m('multi') + 3, .6);
+    pill(p, 'Dam + SeqA · гл. 11', COL_B, cx, 430, m('bac'), 26);
+    const r1 = bar(p, 600, 195, 40, COL_B), r2 = bar(p, 600, 275, 40, COL_B);
+    line(p, 'деление: 20 мин', 600, 180, m('multi'), COL.chalk, 24, 'start', 600); grow(r1, 400, m('multi', .2), 1.2);
+    line(p, 'репликация: 40 мин', 600, 260, m('multi', 1.5), COL.chalk, 24, 'start', 600); grow(r2, 800, m('multi', 1.7), 1.8);
+    pill(p, 'новый раунд раньше конца прошлого: несколько пар вилок', COL_B, 1000, 360, m('multi', 4), 26);
+    const bad = pill(p, 'повторный старт → участок в лишней копии', NO, 800, 495, m('euk'), 28); hide(bad, m('split'), .4);
+    // eukaryotes below
+    const gy = 665;
+    path(p, `M160 ${gy}H1440`, { stroke: COL.chalk, 'stroke-width': 7 }); const gl = p.lastChild; put(gl, { o: 0 }); show(gl, m('euk'), .5);
+    line(p, 'эукариоты: десятки тысяч ориджинов', 160, 620, m('euk'), COL_E, 26, 'start', 700);
+    const boxG = G(p, { o: 0 }), boxS = G(p, { o: 0 });
+    mk('rect', { x: 160, y: 760, width: 640, height: 70, rx: 14, fill: CARD, stroke: DNA, 'stroke-width': 3 }, boxG); T(boxG, 'G1: лицензирование', { x: 480, y: 807, size: 28, fill: DNA, weight: 700, anchor: 'middle' });
+    mk('rect', { x: 810, y: 760, width: 630, height: 70, rx: 14, fill: CARD, stroke: COL.int, 'stroke-width': 3 }, boxS); T(boxS, 'S: запуск', { x: 1125, y: 807, size: 28, fill: COL.int, weight: 700, anchor: 'middle' });
+    show(boxG, m('split'), .5); show(boxS, m('split', .6), .5);
+    pill(p, 'две задачи — в разное время', COL.chalk, 800, 715, m('split'), 26);
+    const discs = Array.from({ length: 12 }, (_, i) => { const x = 220 + i * 105, e = G(p, { x, y: gy, o: 0 }); mk('circle', { r: 20, fill: mix(COL.board, PROT, .45), stroke: PROT, 'stroke-width': 4 }, e); T(e, 'M', { y: 8, size: 22, fill: PROT, weight: 700, anchor: 'middle' }); tw(e, { o: 1 }, m('g1') + i * .4, .4); return e; });
+    const lic = pill(p, 'G1: на ДНК садят неактивные MCM2-7', DNA, 800, 495, m('g1'), 28);
+    const fire = pill(p, 'S: киназы запускают ориджины и закрывают посадку', COL.int, 800, 495, m('s'), 28); hide(lic, m('s', -.2), .3);
+    discs.forEach((e, i) => {
+      const bub = mk('ellipse', { cx: 220 + i * 105, cy: gy, rx: 0, ry: 13, fill: DNA, 'fill-opacity': .9 }, p);
+      prog(q => bub.setAttribute('rx', (46 * q).toFixed(1)), m('s') + .4 + i * .4, .9, io);
+      tw(e, { o: .3 }, m('s') + .4 + i * .4, .6);
+    });
+    const gem = pill(p, 'геминин связывает Cdt1 · многоклеточные', PROT, 800, 560, m('gem'), 26); hide(gem, m('yeast', -.3), .3);
+    pill(p, 'у дрожжей: фосфорилирование CDK', COL.int, 800, 560, m('yeast'), 26);
+  }],
+
+  ['q3', 'Быстрая проверка', () => {
+    const p = panel(0), cx = 420, cy = 450;
+    mk('ellipse', { cx, cy, rx: 190, ry: 165, fill: mix(COL.board, COL_E, .15), stroke: COL_E, 'stroke-width': 6 }, p);
+    mk('ellipse', { cx: cx + 205, cy: cy - 145, rx: 78, ry: 66, fill: mix(COL.board, COL_E, .15), stroke: COL_E, 'stroke-width': 6 }, p);
+    mk('ellipse', { cx: cx - 20, cy: cy + 10, rx: 95, ry: 80, fill: mix(COL.board, DNA, .12), stroke: COL.dim, 'stroke-width': 3, 'stroke-dasharray': '8 6' }, p);
+    say(p, 'ядро', cx - 20, cy + 16, .3, { size: 26, fill: COL.dim });
+    line(p, 'пекарские дрожжи', cx, 700, .3, COL_E, 32, 'middle', 700);
+  }, { ask: done => quiz({ x: 780, y: 150, w: 740, cls: 'side', maxH: 600 }, [{
+    id: 'c-once', prompt: ['Как у пекарских дрожжей запрещён повторный старт ориджина?'],
+    build: choice(['Геминин связывает Cdt1', 'Dam + SeqA на гемиметилированных GATC', 'Фосфорилирование CDK', 'Повторный старт безвреден'], 2,
+      'Фосфорилирование CDK: геминина у дрожжей нет, а старые белки загрузки гасятся киназами.',
+      ['Геминин есть у многоклеточных; у дрожжей его нет.', 'Dam + SeqA работают у бактерий.', null, 'Нет: повторный старт даёт участок в лишней копии.']),
+  }], done) }],
+
+  ['table', 'Остальные различия', (m) => {
+    const p = panel(0), cx = [90, 560, 1010, 1480];
+    [['признак', COL.dim, 'start', 0], ['бактерии', COL_B, 'start', 1], ['эукариоты', COL_E, 'start', 2], ['глава', COL.dim, 'end', 3]].forEach(([s, c, an, i]) => line(p, s, cx[i], 150, .3, c, 28, an, 700));
+    path(p, 'M80 175H1520', { stroke: COL.dim, 'stroke-width': 2.5 });
+    [['ориджины', 'один', 'сотни — десятки тысяч', 'гл. 18', 'r1'], ['скорость вилки', '≈ 1000 нт/с', '17–50 нт/с', 'гл. 17', 'r2'],
+      ['скользящий зажим', 'β-кольцо из 2 частей', 'PCNA из 3 частей', 'гл. 14', 'r3'], ['загрузчик зажима', 'τ₃δδ′χψ, три τ', 'RFC из 5 разных субъединиц', 'гл. 14', 'r4'],
+      ['белок на одиночной цепи', 'SSB', 'RPA', 'гл. 16', 'r5'], ['инициация', 'DnaA; DnaC сажает DnaB', 'ORC, Cdc6, Cdt1 → CMG', 'гл. 18', 'r6']].forEach(([a, b, c, ch, mk_], i) => {
+      const y = 245 + i * 98, g = G(p, { o: 0 });
+      T(g, a, { x: cx[0], y, size: 28, weight: 700 }); T(g, b, { x: cx[1], y, size: 26, fill: COL_B, weight: 600 }); T(g, c, { x: cx[2] - 0, y, size: 26, fill: COL_E, weight: 600 });
+      T(g, ch, { x: cx[3], y, size: 26, fill: COL.int, weight: 700, anchor: 'end' });
+      path(g, `M80 ${y + 34}H1520`, { stroke: COL.dim, 'stroke-width': 1.5, opacity: .5 });
+      tw(g, { o: 1 }, m(mk_), .5);
+    });
+    pill(p, 'полный свод — глава 22', DNA, 800, 840, m('all'), 30);
+  }],
+
+  ['wrap', 'Итоги', (m) => {
+    const p = panel(0);
+    numbered(p, [
+      ['одной вилки мало: ориджинов минимум ≈ 2200, на деле десятки тысяч', 'w1'],
+      ['принципы общие (праймеры, зажимы, топоизомеразы), а белки часто другие', 'w2'],
+      ['CMG идёт по матрице лидирующей цепи, DnaB — по матрице отстающей', 'w3'],
+      ['цена: 4·10⁷ фрагментов, 1200 октамеров/с, теломераза, запрет повтора', 'w4'],
+    ], m, 230, 150, 28);
+  }],
+
+  ['final1', 'Практика главы', () => { panel(0); }, { ask: done => quiz(SCREEN, [{ id: 'p-num', prompt: ['Впишите числа.'], build: blanks(P_NUM) }], done, 'Практика главы   1 из 5') }],
+  ['final2', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{ id: 'p-tf', prompt: ['Верно или неверно?'], build: grid(P_TF, TF, { multi: false, text: true }) }], done, 'Практика главы   2 из 5') }],
+  ['final3', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{ id: 'p-be', prompt: ['Бактерии или эукариоты? Отнесите признаки.'], build: grid(P_BE, BECOLS, { multi: false, text: true }) }], done, 'Практика главы   3 из 5') }],
+  ['final4', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{ id: 'p-hel', prompt: ['Хеликазы: DnaB или CMG?'], build: grid(P_HEL, HCOLS, { multi: false, text: true }) }], done, 'Практика главы   4 из 5') }],
+  ['final5', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{ id: 'p-ord', prompt: ['Расставьте шаги оценки числа ориджинов по порядку.'], build: grid(P_ORD, NCOLS, { multi: false, text: true }) }], done, 'Практика главы   5 из 5') }],
+  ['finish', 'Готово', () => {}, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+/* ---------- question data ---------- */
+const P_NUM = [
+  { parts: [`Бактерия: 4,6·10⁶ нт при 2000 нт/с (две вилки). Секунд: `, { box: '2300' }], why: '4 600 000 / 2000 = 2300 с, около 38 минут.', hint: 'Длину хромосомы разделите на скорость обеих вилок.' },
+  { parts: [`S-фаза 8 часов. Секунд: `, { box: '28800' }], why: '8 · 3600 = 28 800.', hint: 'В часе 3600 секунд.' },
+  { parts: ['Один ориджин (100 нт/с) за S-фазу копирует (в 10⁶ п.н.): ', { box: '2,9' }], test: v => v[0] >= 2.8 && v[0] <= 3, why: '100 · 28 800 = 2 880 000 ≈ 2,9·10⁶ п.н.', hint: 'Скорость двух вилок умножьте на 28 800 с.' },
+  { parts: ['В реальности ориджинов около 30 000. Запас перед минимумом 2200, раз: ', { box: '14' }], test: v => v[0] >= 13 && v[0] <= 15, why: '30 000 / 2200 ≈ 14 раз.', hint: 'Разделите реальное число на расчётный минимум.' },
+  { parts: ['Фрагменты по 150 нт, геном 6,4·10⁹. Фрагментов (в 10⁷): ', { box: '4' }], test: v => v[0] >= 4 && v[0] <= 4.3, why: '6,4·10⁹ / 150 ≈ 4,3·10⁷, то есть около 4·10⁷.', hint: 'Геном разделите на длину фрагмента.' },
+  { parts: ['Новых октамеров 3,4·10⁷ за 28 800 с. В секунду: ', { box: '1200' }], test: v => v[0] >= 1100 && v[0] <= 1300, why: '3,4·10⁷ / 28 800 ≈ 1200 в секунду.', hint: 'Число октамеров разделите на секунды S-фазы.' },
+];
+const P_TF = [
+  { parts: ['Для расчёта S-фазы хватает гаплоидного набора 3,2·10⁹ п.н.'], ans: ['f'], why: 'До S-фазы клетка диплоидна: копировать надо ≈ 6,4·10⁹ п.н.' },
+  { parts: ['Вилка эукариот медленнее бактериальной.'], ans: ['t'], why: '17–50 нт/с против ≈ 1000 нт/с.' },
+  { parts: ['Ориджины человека включаются одновременно.'], ans: ['f'], why: 'Они включаются по расписанию: ранние и поздние.' },
+  { parts: ['Все лицензированные ориджины запускаются.'], ans: ['f'], why: 'Часть остаётся в резерве и не запускается.' },
+  { parts: ['Зажимы, загрузчики и топоизомеразы бактерий и эукариот родственны.'], ans: ['t'], why: 'Это те самые белки, которые сохранились.' },
+  { parts: ['CMG охватывает матрицу отстающей цепи.'], ans: ['f'], why: 'Матрицу лидирующей; по отстающей идёт DnaB.' },
+  { parts: ['У Pol α есть корректорская активность.'], ans: ['f'], why: 'Корректора у неё нет, поэтому её участок потом убирает Pol δ.' },
+  { parts: ['Геминин блокирует повторный старт и у дрожжей.'], ans: ['f'], why: 'У дрожжей геминина нет; работает фосфорилирование CDK.' },
+];
+const BECOLS = [['b', 'бактерии', COL_B, '1'], ['e', 'эукариоты', COL_E, '2']];
+const P_BE = [['Один ориджин', 'b'], ['Десятки тысяч ориджинов', 'e'], ['Фрагменты 1000–2000 нт', 'b'], ['Фрагменты 100–200 нт', 'e'], ['β-кольцо', 'b'],
+  ['PCNA', 'e'], ['SSB', 'b'], ['RPA', 'e'], ['Dam + SeqA', 'b'], ['Нуклеосомы', 'e']].map(([s, a]) => ({ parts: [s], ans: [a], why: a === 'b' ? 'Это у бактерий.' : 'Это у эукариот.' }));
+const HCOLS = [['b', 'DnaB', COL_B, '1'], ['c', 'CMG', COL_E, '2']];
+const P_HEL = [['Охватывает матрицу отстающей цепи', 'b'], ['Охватывает матрицу лидирующей цепи', 'c'], ['Идёт 5′→3′', 'b'], ['Идёт 3′→5′', 'c'], ['Шесть одинаковых субъединиц', 'b'],
+  ['Шесть разных субъединиц', 'c'], ['Садится на одиночную цепь, запуск через секунды', 'b'], ['Садят в G1 неактивным двойным гексамером, запуск через часы', 'c']].map(([s, a]) => ({ parts: [s], ans: [a], why: a === 'b' ? 'Так устроен DnaB.' : 'Так устроен CMG.' }));
+const NCOLS = [1, 2, 3, 4, 5].map(i => [String(i), `${i}-й`, null, String(i)]);
+const P_ORD = [
+  { parts: ['Сравнить с реальными 30–50 тысячами: запас'], ans: ['5'], why: 'Последний шаг: сравнить оценку с наблюдаемым числом.' },
+  { parts: ['Взять диплоидный геном 6,4·10⁹ п.н.'], ans: ['1'], why: 'С него начинается счёт.' },
+  { parts: ['Разделить геном на то, что копирует один ориджин: ≈ 2200'], ans: ['4'], why: '6,4·10⁹ / 2,9·10⁶ ≈ 2200.' },
+  { parts: ['Перевести S-фазу в секунды: 28 800'], ans: ['2'], why: '8 · 3600 = 28 800.' },
+  { parts: ['Посчитать, сколько копирует один ориджин: ≈ 2,9·10⁶ п.н.'], ans: ['3'], why: '100 · 28 800 ≈ 2,9·10⁶.' },
+];
+boot();
+</script>
+</body>
+</html>

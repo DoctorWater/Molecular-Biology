@@ -33,5 +33,17 @@
       P('M405 92C450 86 490 70 575 52') + P('M405 88C450 94 490 110 575 128') +
       `<circle class="t hop" r="7" fill="currentColor" stroke="none" style="--k:${k++};offset-path:path('M575 52C490 70 450 86 405 92')"/>` +
       Tx(222, 88, '5′', 20, 'a faint', 'end') + Tx(590, 40, '3′', 20, 'a faint') + Tx(590, 152, '5′', 20, 'a faint')),
+    // Эукариотическая вилка: линейная хромосома с концами-теломерами и множеством пузырей; ориджины загораются по очереди.
+    (() => {
+      const eyes = [[255, 305, 20], [335, 405, 30], [430, 465, 13], [495, 560, 26]];
+      // Between bubbles the parental duplex (chalk); in a bubble the old strands part (chalk, outside) and each gets a new one (inside).
+      const xs = [230, ...eyes.flatMap(([x1, x2]) => [x1, x2]), 575];
+      const gaps = Array.from({ length: xs.length / 2 }, (_, i) => `M${xs[2 * i]} 84H${xs[2 * i + 1]}M${xs[2 * i]} 96H${xs[2 * i + 1]}`).join('');
+      const arc = (x1, x2, y, dy) => `M${x1} ${y}Q${(x1 + x2) / 2} ${y + dy} ${x2} ${y}`;
+      return reset(P(gaps, 'a') + P('M230 76V104', 'a faint') + P('M575 76V104', 'a faint') +
+        eyes.map(([x1, x2, h]) => P(arc(x1, x2, 84, -h * 2), 'a') + P(arc(x1, x2, 96, h * 2), 'a') +
+          P(arc(x1, x2, 84, -h * 2 + 12)) + P(arc(x1, x2, 96, h * 2 - 12))).join('') +
+        eyes.map(([x1, x2], j) => `<circle class="cell" style="--j:${[2, 0, 3, 1][j]}" cx="${(x1 + x2) / 2}" cy="90" r="6" fill="currentColor" stroke="none"/>`).join(''));
+    })(),
   ];
 })();
