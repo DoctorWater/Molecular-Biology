@@ -83,6 +83,15 @@
         ],
         "createdAt": "2026-10-15T00:50:48.525Z",
         "reason": "user confirmed 2026-10-14: keep card side accent as is"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "ch15/index.html"
+        ],
+        "createdAt": "2026-10-15T20:04:52.397Z",
+        "reason": "user confirmed 2026-10-14: keep card side accent as is"
       }
     ]
   }
