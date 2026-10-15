@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PCNA и RFC — ДНК и её копирование</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d2b27'/%3E%3Cpath d='M12 24H52M12 34H52' stroke='%23ece8dc' stroke-width='6'/%3E%3Cpath d='M12 44H52' stroke='%23f0b45a' stroke-width='6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../lib/engine.css">
+<link rel="expect" href="#bar" blocking="render"><!-- hold the first frame until the player exists, so the page transition can run -->
+</head>
+<body>
+<!-- impeccable ignore-value side-tab: the card side accent in ../lib/engine.css is kept on purpose (owner confirmed 2026-10-14) -->
+<script src="../lib/engine.js"></script>
+<script src="../lib/bio.js"></script>
+<script src="audio/ru/timings.js"></script>
+<script>
+'use strict';
+const CHAPTER = { number: 14, title: 'PCNA и RFC', minutes: 18, language: 'ru', next: null };
+
+/* ---------- chapter drawing helpers (shared ones: lib/bio.js — pcna3, rfc5, onOff, ringLining, betaRing, clampLoader, dnaBRing, enzyme, dsIcon) ---------- */
+const NB = ' ';
+const PIPC = COL.whole;
+const line = (p, str, x, y, t0, fill = COL.chalk, size = 28, anchor = 'start', weight = 600) => say(p, str, x, y, t0, { size, fill, anchor, weight });
+const crossX = (p, x, y, k = 1, c = NO) => { const g = G(p, { x, y, s: k }); path(g, 'M-26 -26L26 26M26 -26L-26 26', { stroke: c, 'stroke-width': 8 }); return g; };
+const strip = (p, x, y, w, h, col, o = 1) => put(mk('rect', { x, y, width: w, height: h, rx: Math.min(10, h / 2), fill: col }, p), { o });
+const swap = (e, str, t) => prog(() => { e.textContent = str; }, t, .01, lin);
+const cues = id => TIMINGS[id].cues.map(c => c[0]);
+// ubiquitin mark
+function ubi(p, x, y, r = 17) {
+  const g = G(p, { x, y });
+  mk('circle', { r, fill: COL.int }, g);
+  T(g, 'Ub', { y: r * .36, size: r * 1.0, fill: COL.board, weight: 700, anchor: 'middle' });
+  return g;
+}
+const SH = [mix(PROT, COL.nat, .7), PROT, mix(PROT, COL.chalk, .55), mix(PROT, COL.real, .5), mix(PROT, COL.real, .95)].map(c => mix(COL.board, c, .5));
+// a ring of subunit circles on six places (place 0 on top); n = 5 leaves the sixth empty (dashed)
+function slotRing(p, x, y, R, r, t0, n = 6) {
+  const g = G(p, { x, y, o: 0 });
+  for (let i = 0; i < 6; i++) {
+    const a = (-90 + 60 * i) * Math.PI / 180, cx = R * Math.cos(a), cy = R * Math.sin(a);
+    if (i < n) mk('circle', { cx, cy, r, fill: n === 6 ? SH[1 + i % 2] : SH[i], stroke: PROT, 'stroke-width': 3 }, g);
+    else g.empty = mk('circle', { cx, cy, r, fill: 'none', stroke: COL.int, 'stroke-width': 4, 'stroke-dasharray': '9 7' }, g);
+  }
+  if (t0 != null) show(g, t0);
+  return g;
+}
+// flash the domain paths of a ring one after another (a bright fill and back)
+function flashDoms(doms, t0, step = .22) {
+  doms.forEach((d, i) => {
+    const c0 = d.getAttribute('fill'), c1 = mix(c0, COL.chalk, .5);
+    tw(d, { c_fill: c1 }, t0 + i * step, .2); tw(d, { c_fill: c0 }, t0 + i * step + .25, .3);
+  });
+}
+const betaBd = g => (g.bd = [-1, 1].map(s => path(g, `M0 ${s * (g.R1 - 8)}L0 ${s * (g.R2 + 8)}`, { stroke: COL.int, 'stroke-width': 7 }, { o: 0 })));
+const betaDoms = g => [...g.m1.querySelectorAll('path'), ...g.m2.querySelectorAll('path')];
+// the five-step bar (atp … junction): chip k is lit
+const STEPS = ['АТФ', 'захват и раскрытие', 'вход A-gate', 'стык и гидролиз', 'уход'];
+function stepBar(p, k, t0) {
+  const g = G(p, { o: 0 });
+  STEPS.forEach((s, i) => {
+    const x = 160 + i * 320, on = i === k;
+    mk('rect', { x: x - 150, y: 62, width: 300, height: 48, rx: 24, fill: on ? mix(COL.board, COL.int, .3) : CARD, stroke: on ? COL.int : COL.faint, 'stroke-width': on ? 3 : 2 }, g);
+    T(g, `${i + 1}  ${s}`, { x, y: 95, size: 24, fill: on ? COL.int : COL.dim, weight: 700, anchor: 'middle' });
+  });
+  show(g, t0);
+  return g;
+}
+// partner pill on a pocket of a ring: a line from the pocket to a pill centred at (x, y)
+function partner(p, ring, k, label, x, y, t0, { w = 170, col = PIPC, sw = 8, dash = false, s = ring._st.s } = {}) {
+  const [px, py] = [ring._st.x + s * ring.pkPt[k][0], ring._st.y + s * ring.pkPt[k][1]];
+  const lk = path(p, `M${px} ${py}L${x} ${y}`, { stroke: col, 'stroke-width': sw, ...(dash ? { 'stroke-dasharray': '12 9' } : {}) }, { o: 0 });
+  const e = enzyme(p, label, x, y, null, { w, h: 56, size: 26 }); put(e, { o: 0 });
+  show(lk, t0); show(e, t0);
+  return { e, lk };
+}
+// a bare duplex line pair going from x0 to x1 at height y (template chalk, primer amber)
+const duoLines = (p, x0, x1, y) => [path(p, `M${x0} ${y}H${x1}`, { stroke: COL.chalk, 'stroke-width': 7 }), path(p, `M${x0} ${y - 14}H${x1}`, { stroke: DNA, 'stroke-width': 7 })];
+
+/* ---------- beats: [id, title, run(m, D), { ask }?] ---------- */
+const BEATS = [
+  ['intro', 'PCNA и RFC', (m, D) => {
+    const g = G(scene, { o: 0, y: 24 });
+    T(g, 'Раздел 3 «Эукариотическая вилка» · Глава 14', { x: 800, y: 330, size: 28, fill: COL.dim, anchor: 'middle' });
+    T(g, 'PCNA и RFC', { x: 800, y: 440, size: 70, weight: 600, anchor: 'middle' });
+    tw(g, { o: 1, y: 0 }, .2, 1.1, out);
+    const r = say(scene, 'зажим и загрузчик эукариот', 800, 540, m('sub'), { size: 36, fill: COL.dim });
+    tw(g, { o: 0, y: -24 }, D - .9, .8); hide(r, D - .9, .8);
+  }],
+
+  ['count', 'Сорок миллионов колец', (m) => {
+    const p = panel(0), G1 = G(p), G2 = G(p);
+    pill(G1, 'фрагмент Оказаки ≈ 150 нт', DNA, 800, 130, .4, 30);
+    const fr = dsIcon(G1, 800, 215, 'new', 'old', null, { w: 220, gap: 34, sw: 9 }); put(fr, { o: 0 }); show(fr, .8);
+    pill(G1, 'геном ≈ 6,4·10⁹ п.н.', COL.chalk, 800, 335, m('genome'), 30);
+    const gn = dsIcon(G1, 800, 410, 'old', 'old', null, { w: 1300, gap: 30, sw: 9 }); put(gn, { o: 0 }); show(gn, m('genome'));
+    colorLine(G1, [['6,4·10⁹ / 150 ≈ '], ['4,3·10⁷', DNA], [' фрагментов']], 800, 540, m('genome', 3.6), { size: 46 });
+    hide(G1, m('ring', -.2), .5);
+    const c = T(G2, '0,0·10⁷', { x: 800, y: 480, size: 120, fill: DNA, weight: 700, anchor: 'middle', o: 0 });
+    show(c, m('ring', .2));
+    prog(q => { c.textContent = `${(q * 4.3).toFixed(1).replace('.', ',')}·10⁷`; }, m('ring', .3), 5, out);
+    const cl = line(G2, 'колец PCNA надо надеть за одну S-фазу', 800, 545, m('ring', .6), COL.dim, 30, 'middle');
+    tw(c, { y: 270 }, m('ecoli', -.4), .7); tw(cl, { y: 335 }, m('ecoli', -.4), .7);
+    const bar = (y, w, col, lab, val, t) => {
+      line(G2, lab, 250, y + 8, t, COL.chalk, 28, 'end', 700);
+      const b = strip(G2, 280, y - 14, w, 28, col, 0); show(b, t);
+      line(G2, val, 280 + w + 20, y + 8, t, col, 28, 'start', 700);
+    };
+    bar(520, 1000, DNA, 'человек', '≈ 4,3·10⁷', m('ecoli'));
+    bar(600, 3, PROT, 'E. coli', '≈ 2300: на этой шкале почти точка', m('ecoli', 1.4));
+    hide(G2, m('euk', -.3), .5);
+    pill(p, 'бактерии', COL.chalk, 430, 130, m('euk'), 30); pill(p, 'эукариоты', COL.chalk, 1170, 130, m('euk', 3.4), 30);
+    const ld = clampLoader(p, 430, 350, null, { s: .85 }); put(ld, { o: 0 }); show(ld, m('euk'));
+    const br = betaRing(p, 430, 600, null, { s: .32 }); put(br, { o: 0 }); show(br, m('euk', .4));
+    line(p, 'β₂ + загрузчик τ₃δδ′', 430, 735, m('euk', .8), PROT, 30, 'middle', 700);
+    const rf = rfc5(p, 1170, 330, null, { s: .75 }); put(rf, { o: 0 }); show(rf, m('euk', 3.6));
+    const pc = pcna3(p, 1170, 600, null, { s: .32 }); put(pc, { o: 0 }); pc.shade(null); show(pc, m('euk', 4));
+    line(p, 'PCNA + RFC', 1170, 735, m('euk', 4.4), PROT, 30, 'middle', 700);
+  }],
+
+  ['pcna', 'Кольцо PCNA', (m) => {
+    const p = panel(0), g = pcna3(p, 500, 470, .3, { s: 1.2 }), x0 = 900;
+    pill(p, 'скользящий зажим эукариот', PROT, 1200, 170, .8, 30);
+    line(p, 'proliferating cell nuclear antigen', x0, 280, m('name'), COL.chalk, 32, 'start', 700);
+    line(p, 'антиген делящихся клеток — название историческое', x0, 326, m('name', .5), COL.dim, 26, 'start', 600);
+    g.shade(m('three'), .8);
+    line(p, 'три одинаковые молекулы — гомотример', x0, 430, m('three'), COL.chalk, 30, 'start', 700);
+    line(p, 'оттенки только помогают различить их', x0, 474, m('three', .4), COL.dim, 26, 'start', 600);
+    g.loop.forEach((l, i) => show(l, m('dom', .4 + i * .4), .4));
+    flashDoms(g.dom.slice(0, 2), m('dom'), .4);
+    line(p, 'в каждой молекуле два похожих домена', x0, 580, m('dom'), COL.chalk, 30, 'start', 700);
+    line(p, 'соединены длинной петлёй; ≈ 29 кДа', x0, 624, m('dom', .4), COL.dim, 26, 'start', 600);
+    show(g.arr, m('ht'), .6);
+    line(p, 'голова к хвосту, как у β-кольца', x0, 740, m('ht'), COL.chalk, 30, 'start', 700);
+  }],
+
+  ['compare', 'β₂ и PCNA: шесть доменов', (m) => {
+    const p = panel(0), b = betaRing(p, 410, 430, .3, { s: .85 }), c = pcna3(p, 1190, 430, .3, { s: .85 });
+    c.shade(null); betaBd(b);
+    pill(p, 'β₂ · кишечная палочка', PROT, 410, 160, .5, 28); pill(p, 'PCNA · эукариоты', PROT, 1190, 160, .5, 28);
+    line(p, '2 × 3 = 6 доменов', 410, 690, m('b'), COL.chalk, 32, 'middle', 700);
+    flashDoms(betaDoms(b), m('b', .6));
+    line(p, '3 × 2 = 6 доменов', 1190, 690, m('p'), COL.chalk, 32, 'middle', 700);
+    flashDoms(c.dom, m('p', .6));
+    line(p, '≈ 41 → ≈ 82 кДа', 410, 736, m('mass'), COL.dim, 28, 'middle', 600);
+    line(p, '≈ 29 → ≈ 87 кДа', 1190, 736, m('mass', 1.6), COL.dim, 28, 'middle', 600);
+    b.bd.forEach((l, i) => show(l, m('border', .2 + i * .5), .4));
+    c.bd.forEach((l, i) => show(l, m('border', 1.6 + i * .5), .4));
+    line(p, 'границ: 2', 410, 782, m('border', .2), COL.int, 32, 'middle', 700);
+    line(p, 'границ: 3', 1190, 782, m('border', 1.6), COL.int, 32, 'middle', 700);
+    ringLining(b);
+    show(b.hel, m('inside'), .6); show(c.hel, m('inside'), .6);
+    show(b.sheet, m('inside', 3), .6); show(c.sheet, m('inside', 3), .6);
+    line(p, '6 × 2 = 12 α-спиралей', 800, 430, m('inside'), COL.chalk, 30, 'middle', 700);
+    line(p, 'внутри', 800, 468, m('inside', .2), COL.dim, 26, 'middle', 600);
+    line(p, 'сплошной слой β-листов', 800, 530, m('inside', 3), COL.chalk, 28, 'middle', 700);
+    line(p, 'снаружи', 800, 566, m('inside', 3.2), COL.dim, 26, 'middle', 600);
+    pill(p, 'складка та же, текст другой', COL.int, 800, 845, m('inside', 7), 28);
+  }],
+
+  ['q1', 'Быстрая проверка', () => {
+    const p = panel(0), b = betaRing(p, 420, 340, .3, { s: .8 }), c = pcna3(p, 1180, 340, .3, { s: .8 });
+    c.shade(null);
+    S.picks = [{ el: b, box: [240, 160, 360, 360], label: 'кольцо β₂' }, { el: c, box: [1000, 160, 360, 360], label: 'кольцо PCNA' }];
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-three', prompt: ['У какого кольца три границы между субъединицами? Нажмите на него.'],
+    build: pickEls(S.picks, 1, 'У PCNA три субъединицы, значит, три границы между ними.',
+      () => 'У β₂ две субъединицы, значит, две границы.'),
+  }], done) }],
+
+  ['gap', 'Зазор между кольцом и ДНК', (m) => {
+    const p = panel(0), X = 500, Y = 460, K = 1.15, g = pcna3(p, X, Y, .3, { s: K }), x0 = 930;
+    g.shade(null);
+    const dna = G(p, { x: X, y: Y, o: 0 });
+    mk('circle', { r: 90 * K, fill: mix(COL.board, DNA, .3), stroke: DNA, 'stroke-width': 4 }, dna);
+    T(dna, 'ДНК', { y: -2, size: 36, fill: DNA, weight: 700, anchor: 'middle' });
+    T(dna, '≈ 20 Å', { y: 40, size: 28, fill: COL.chalk, weight: 600, anchor: 'middle' });
+    show(dna, m('dna'), .6);
+    line(p, 'спираль B-формы ≈ 20 Å', x0, 200, m('dna'), DNA, 30, 'start', 700);
+    hBracket(p, X - 157 * K, X + 157 * K, Y + 253 * K - 14, 'отверстие ≈ 35 Å', COL.chalk, m('hole'), { up: false });
+    line(p, 'отверстие PCNA ≈ 35 Å', x0, 250, m('hole'), COL.chalk, 30, 'start', 700);
+    const band = path(p, `M${-157 * K} 0a${157 * K} ${157 * K} 0 1 0 ${314 * K} 0a${157 * K} ${157 * K} 0 1 0 ${-314 * K} 0ZM${-90 * K} 0a${90 * K} ${90 * K} 0 1 0 ${180 * K} 0a${90 * K} ${90 * K} 0 1 0 ${-180 * K} 0Z`,
+      { fill: COL.int, 'fill-opacity': .5, 'fill-rule': 'evenodd', stroke: 'none' }, { x: X, y: Y, o: 0 });
+    show(band, m('gap'), .5); pulse(band, m('gap'), 1.03);
+    [-1, 1].forEach(s => say(p, '7,5', X + s * 129 * K, Y + 8, m('gap', .5), { size: 26, fill: COL.board, weight: 700 }));
+    colorLine(p, [['(35 − 20) / 2 = '], ['7,5 Å', COL.int]], x0, 345, m('gap', 1), { size: 42, anchor: 'start' });
+    line(p, 'зазор с каждой стороны', x0, 390, m('gap', 1.4), COL.dim, 26, 'start', 600);
+    // water in the gap and the charges lining the hole
+    for (let i = 0; i < 20; i++) {
+      const a = (i * 18 + (i % 2) * 7) * Math.PI / 180, r = (i % 2 ? 123 : 140) * K, w = mk('circle', { cx: X + r * Math.cos(a), cy: Y + r * Math.sin(a), r: 5, fill: mix(COL.board, COL.whole, .75) }, p);
+      put(w, { o: 0 }); show(w, m('water', .3 + i * .05), .3);
+    }
+    show(g.plus, m('water', 1.5), .6);
+    line(p, 'в зазоре слой воды', x0, 480, m('water'), COL.chalk, 30, 'start', 700);
+    line(p, '«+» выстилки притягивают остов,', x0, 524, m('water', 1.6), COL.dim, 26, 'start', 600);
+    line(p, 'но не держат: PCNA скользит', x0, 560, m('water', 1.8), COL.dim, 26, 'start', 600);
+    hBracket(p, X - 209 * K, X + 209 * K, Y - 209 * K - 18, 'снаружи ≈ 80 Å', COL.chalk, m('out'), { up: true });
+    const lock = G(p, { x: X, y: Y - 183 * K, o: 0 });
+    mk('rect', { x: -22, y: -4, width: 44, height: 34, rx: 7, fill: COL.board, stroke: OK, 'stroke-width': 4 }, lock);
+    path(lock, 'M-12 -4V-14A12 12 0 0 1 12 -14V-4', { stroke: OK, 'stroke-width': 4 });
+    show(lock, m('closed'), .5); pulse(lock, m('closed'), 1.3);
+    line(p, 'замкнутое кольцо: на ДНК не садится', x0, 700, m('closed'), OK, 30, 'start', 700);
+    line(p, 'как и β, ждёт загрузчика', x0, 744, m('closed', 1.6), COL.dim, 26, 'start', 600);
+  }],
+
+  ['pip', 'PIP-бокс', (m) => {
+    const p = panel(0), R0 = pcna3(p, 300, 520, .3, { s: .7 }), CX = i => 610 + 110 * i;
+    R0.shade(null);
+    const LET = ['Q', 'x', 'x', 'L/I/M', 'x', 'x', 'F/Y', 'F/Y'], KEY = [0, 3, 6, 7], P21 = ['Q', 'T', 'S', 'M', 'T', 'D', 'F', 'Y'];
+    const cell = (i, y, str, hi, t, col) => {
+      const g = G(p, { x: CX(i), y, o: 0 });
+      mk('rect', { x: -50, y: -32, width: 100, height: 64, rx: 14, fill: hi ? mix(COL.board, col, .3) : CARD, stroke: hi ? col : COL.faint, 'stroke-width': hi ? 3.5 : 2.5 }, g);
+      T(g, str, { y: 10, size: str.length > 1 ? 26 : 34, fill: hi ? col : COL.dim, weight: 700, anchor: 'middle' });
+      show(g, t); return g;
+    };
+    line(p, 'любой белок с коротким мотивом', 1010, 110, .5, COL.chalk, 30, 'middle', 700);
+    for (let i = 0; i < 8; i++) { const g = G(p, { x: CX(i), y: 192, o: 0 }); mk('rect', { x: -50, y: -32, width: 100, height: 64, rx: 14, fill: CARD, stroke: COL.faint, 'stroke-width': 2.5 }, g); T(g, String(i + 1), { y: 10, size: 28, fill: COL.faint, weight: 700, anchor: 'middle' }); show(g, 1 + i * .1); }
+    pill(p, 'PIP-бокс', PIPC, 300, 192, m('name'), 34);
+    const row = LET.map((l, i) => cell(i, 192, l, KEY.includes(i), m('rule', .3 + i * .5), PIPC));
+    row.forEach((g, i) => { if (KEY.includes(i)) pulse(g, m('rule', .3 + i * .5), 1.15); });
+    line(p, 'остальные позиции — любые (x)', 1010, 290, m('rule', 4.5), COL.dim, 26, 'middle', 600);
+    line(p, 'p21', 540, 446, m('p21'), COL.chalk, 32, 'end', 700);
+    P21.forEach((l, i) => cell(i, 435, l, KEY.includes(i), m('p21', .2 + i * .15), PIPC));
+    const d = path(p, `M${CX(3)} 310V402`, { stroke: PIPC, 'stroke-width': 4, 'stroke-dasharray': '8 8' }); put(d, { o: 0 }); show(d, m('p21', 2.8), .4);
+    line(p, 'позиция 4: M — подходит', 1010, 520, m('p21', 3.2), PIPC, 28, 'middle', 700);
+    // the pocket in close-up
+    const Z = G(p, { o: 0 });
+    mk('rect', { x: 890, y: 590, width: 340, height: 150, rx: 44, fill: 'none', stroke: PROT, 'stroke-width': 4, 'stroke-dasharray': '12 8' }, Z);
+    mk('rect', { x: 780, y: 620, width: 100, height: 76, rx: 26, fill: 'none', stroke: PROT, 'stroke-width': 4, 'stroke-dasharray': '12 8' }, Z);
+    [[830, 658, 'Q'], [950, 640, 'M'], [1060, 676, 'F'], [1160, 640, 'Y']].forEach(([x, y, l]) => {
+      mk('circle', { cx: x, cy: y, r: 27, fill: PIPC }, Z);
+      T(Z, l, { x, y: y + 10, size: 30, fill: COL.board, weight: 700, anchor: 'middle' });
+    });
+    T(Z, 'гидрофобный карман', { x: 1060, y: 575, size: 26, fill: PROT, weight: 700, anchor: 'middle' });
+    T(Z, 'боковой', { x: 830, y: 725, size: 22, fill: PROT, weight: 700, anchor: 'middle' });
+    show(Z, m('hold'), .6);
+    arrowTo(p, 440, 450, 770, 630, PIPC, m('hold'), true);
+    show(R0.pk[0], m('hold'), .4);
+    line(p, 'M, F, Y — в гидрофобном кармане, Q — в боковом', 1010, 800, m('hold', 1.6), COL.dim, 26, 'middle', 600);
+    R0.pk.forEach((e, i) => { show(e, m('pocket', .3 + i * .5), .4); pulse(e, m('pocket', .3 + i * .5), 1.25); });
+    R0.loop.forEach(l => show(l, m('pocket'), .4));
+    line(p, 'лицевая сторона, у петли:', 300, 730, m('pocket'), COL.chalk, 26, 'middle', 700);
+    line(p, 'три кармана, по одному на субъединицу', 300, 770, m('pocket', .6), COL.dim, 24, 'middle', 600);
+  }],
+
+  ['partners', 'Партнёры PCNA', (m) => {
+    const p = panel(0), X = 1170, Y = 450, K = .85, g = pcna3(p, X, Y, .3, { s: K });
+    g.shade(null); g.pk.forEach(e => show(e, .8, .4));
+    const card = (i, t, name, note, { dash = false, w = 5, qm = false, name2 } = {}) => {
+      const y = 170 + i * 150, c = G(p, { o: 0 });
+      mk('rect', { x: 100, y: y - 52, width: 560, height: 104, rx: 22, fill: CARD, stroke: dash ? COL.dim : PROT, 'stroke-width': 3, ...(dash ? { 'stroke-dasharray': '12 9' } : {}) }, c);
+      T(c, name, { x: 130, y: y - 4, size: 34, fill: PROT, weight: 700 });
+      T(c, note, { x: 130, y: y + 34, size: 24, fill: COL.dim, weight: 600 });
+      if (qm) pill(c, '?', COL.int, 600, y, null, 30);
+      show(c, t);
+      const [tx, ty] = i < 3 ? g.pkPt[2] : g.pkPt[1], ax = X + K * tx, ay = Y + K * ty;
+      const lk = path(p, `M660 ${y}L${ax} ${ay}`, { stroke: PIPC, 'stroke-width': w, ...(dash ? { 'stroke-dasharray': '12 9' } : {}) }, { o: 0 });
+      show(lk, t + .3);
+      return c;
+    };
+    card(0, m('d'), 'Pol δ', 'связь прочная; отстающая цепь', { w: 10 });
+    card(1, m('e'), 'Pol ε', 'держит слабее; на ДНК её держит CMG', { dash: true, w: 4 });
+    card(2, m('fl'), 'FEN1  ·  ДНК-лигаза I', 'срезает флэпы · зашивает разрыв');
+    card(3, m('oth'), 'репарация, метилирование', 'p21, транслезионные полимеразы (Pol η)');
+    const a = card(4, m('alpha'), 'Pol α', 'надёжно не показано', { dash: true, w: 3, qm: true });
+    line(p, 'нет надёжного PIP-бокса', 380, 870, m('alpha', 1.2), COL.int, 26, 'middle', 700);
+  }],
+
+  ['compete', 'Три кармана, много партнёров', (m) => {
+    const p = panel(0), X = 800, Y = 450, K = .8, g = pcna3(p, X, Y, .3, { s: K }), d = cues('compete');
+    g.shade(null); g.pk.forEach(e => show(e, .5, .4));
+    const dna = G(p, { x: X, y: Y, o: 0 });
+    mk('circle', { r: 90 * K, fill: mix(COL.board, DNA, .3), stroke: DNA, 'stroke-width': 4 }, dna);
+    T(dna, 'ДНК', { y: 10, size: 30, fill: DNA, weight: 700, anchor: 'middle' });
+    const pDel = partner(p, g, 2, 'Pol δ', 540, 285, .8), pLig = partner(p, g, 1, 'ДНК-лигаза I', 800, 720, 1.4, { w: 210 }), pP21 = partner(p, g, 0, 'p21', 1060, 285, 2);
+    const c1 = line(p, 'карман занимает тот, у кого мотив сильнее', 800, 830, 3, COL.dim, 28, 'middle', 600);
+    hide(c1, m('win', -.3), .3);
+    // win: p21 pushes the others away
+    pulse(pP21.e, m('win'), 1.2); tw(pP21.lk, { 'a_stroke-width': 16 }, m('win'), .5);
+    [pDel, pLig].forEach((q, i) => { tw(q.e, { o: .25 }, m('win', 1.2), .6); tw(q.lk, { o: 0 }, m('win', 1.2), .5); });
+    tw(pDel.e, { x: 470 }, m('win', 1.2), .8); tw(pLig.e, { y: 760 }, m('win', 1.2), .8);
+    const w1 = pill(p, 'p21 вытесняет остальных', COL.chalk, 1260, 400, m('win', 1.6), 26), w2 = pill(p, 'стоп синтеза ДНК', COL.int, 1260, 470, m('win', 4.5), 28);
+    hide(w1, m('belt', -.3), .3); hide(w2, m('belt', -.3), .3);
+    // belt: polymerase and nuclease side by side, the strand runs through
+    show(dna, m('belt'), .6);
+    hide(pP21.e, m('belt', -.3), .4); hide(pP21.lk, m('belt', -.3), .4);
+    tw(pDel.e, { x: 540, o: 1 }, m('belt'), .6); tw(pDel.lk, { o: 1 }, m('belt'), .6);
+    const nu = partner(p, g, 0, 'FEN1', 1060, 285, m('belt', 1));
+    const w3 = pill(p, 'ремень с инструментами', COL.chalk, 800, 150, m('belt', 1.4), 32); hide(w3, m('ub', -.3), .3);
+    tw(pLig.e, { o: 0 }, m('belt', -.3), .4);
+    const w4 = line(p, 'цепь проходит через кольцо', 800, 830, m('belt', 3), COL.chalk, 28, 'middle', 700); hide(w4, m('ub', -.3), .3);
+    // ubiquitin on K164
+    const u = ubi(p, X + K * g.pkPt[1][0] + 70, Y + K * g.pkPt[1][1] - 40, 20); put(u, { o: 0, s: .5 }); pop(u, m('ub'));
+    line(p, 'K164', X + 110, Y + K * g.pkPt[1][1] - 30, m('ub', .3), COL.int, 24, 'start', 700);
+    const tl = partner(p, g, 1, 'Pol η (TLS)', 800, 720, m('ub', 1.4), { w: 210 });
+    tw(pDel.e, { x: 440, o: .25 }, m('ub', 1.4), .8); tw(pDel.lk, { o: 0 }, m('ub', 1.4), .5);
+    hide(nu.e, m('ub', 1.4), .4); hide(nu.lk, m('ub', 1.4), .4);
+    pill(p, 'метка зовёт TLS-полимеразы', COL.int, 1180, 560, m('ub', 1.8), 26);
+  }],
+
+  ['q2', 'Быстрая проверка', () => {
+    const p = panel(0), X = 800, Y = 330, K = .65, g = pcna3(p, X, Y, .3, { s: K });
+    g.shade(null); g.pk.forEach(e => show(e, .4, .3));
+    const a = partner(p, g, 2, 'Pol δ', 590, 215, .5), b = partner(p, g, 1, 'ДНК-лигаза I', 800, 545, .5, { w: 210 }), c = partner(p, g, 0, 'p21', 1010, 215, .5);
+    S.picks = [{ el: a.e, box: [505, 181, 170, 68], label: 'Pol δ' }, { el: b.e, box: [695, 511, 210, 68], label: 'ДНК-лигаза I' }, { el: c.e, box: [925, 181, 170, 68], label: 'p21' }];
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-p21', prompt: ['Кто из трёх партнёров вытеснит остальных, когда клетка решила не делиться? Нажмите на него.'],
+    build: pickEls(S.picks, 2, 'p21 держится за PCNA намного крепче и останавливает синтез ДНК.',
+      i => i === 0 ? 'Pol δ работает на ДНК, а не останавливает синтез.' : 'Мотив ДНК-лигазы I слабее, чем у p21.'),
+  }], done) }],
+
+  ['rfc', 'Загрузчик RFC', (m) => {
+    const p = panel(0), e = rfc5(p, 430, 330, null, { s: .95, ec: true, bare: true }), r = rfc5(p, 1170, 330, null, { s: .95 }), c = pcna3(p, 1170, 640, null, { s: .85, tilt: .3 });
+    put(e, { o: 0 }); put(r, { o: 0 }); put(c, { o: 0 }); c.shade(null);
+    pill(p, 'загрузчик зажима', PROT, 800, 120, .4, 32);
+    show(e, m('ec'), .6); e.nm.forEach((n, i) => show(n, m('ec', .3 + i * .25), .3));
+    line(p, 'бактерия: три одинаковых + δ + δ′', 430, 230, m('ec'), COL.chalk, 26, 'middle', 700);
+    show(r, m('each'), .6); r.nm.forEach((n, i) => show(n, m('each', .3 + i * .25), .3));
+    line(p, 'эукариоты: каждая из пяти — свой ген', 1170, 230, m('each'), COL.chalk, 26, 'middle', 700);
+    pill(p, 'семейство AAA+', PROT, 430, 520, m('aaa'), 30);
+    line(p, 'ферменты, гидролизующие АТФ', 430, 580, m('aaa', .4), COL.dim, 26, 'middle', 600);
+    line(p, 'как хеликаза MCM в CMG', 430, 640, m('aaa', 1.8), COL.dim, 26, 'middle', 600);
+    const hx = slotRing(p, 430, 740, 46, 20, null, 6); show(hx, m('aaa', 1.8));
+    show(c, m('helix', -.2), .6);
+    r.pose('helix', m('helix'), 1.4);
+    arrowTo(p, 1050, 470, 1050, 585, COL.chalk, m('helix', 1.2));
+    line(p, 'правая спираль — «пружинка»,', 1090, 530, m('helix', 1.4), COL.chalk, 26, 'start', 700);
+    line(p, 'обращена к PCNA', 1090, 566, m('helix', 1.6), COL.chalk, 26, 'start', 700);
+    [e, r].forEach(q => q.ltr.forEach((l, i) => show(l, m('letters', .3 + i * .45), .3)));
+  }],
+
+  ['analog', 'Позиции A–E: RFC и загрузчик E. coli', (m) => {
+    const p = panel(0), e = rfc5(p, 800, 230, .3, { ec: true, bare: true }), r = rfc5(p, 800, 560, .3, { bare: true });
+    [e, r].forEach(q => q.nm.forEach((n, i) => show(n, .6 + i * .1, .3)));
+    pill(p, 'кишечная палочка', COL.chalk, 330, 262, .5, 28); pill(p, 'эукариоты', COL.chalk, 330, 594, .5, 28);
+    show(r.ltr[0], 0); r.ltr.forEach((l, i) => show(l, 1 + i * .1, .3));
+    const cl = [COL.nat, COL.irr, COL.irr, COL.irr, COL.real], link = i => {
+      const l = path(p, `M${800 + e.XS[i] * 1} 305V552`, { stroke: cl[i], 'stroke-width': 6, 'stroke-dasharray': '4 10' }); return put(l, { o: 0 });
+    };
+    const ln = [0, 1, 2, 3, 4].map(link);
+    const act = (ids, t) => ids.forEach(i => { show(e.halo[i], t, .4); show(r.halo[i], t, .4); show(ln[i], t, .4); pulse(e.sub[i], t, 1.12); pulse(r.sub[i], t, 1.12); });
+    act([0], m('a')); act([1, 2, 3], m('bcd')); act([4], m('e'));
+    line(p, 'A = RFC1 ↔ δ', 1090, 420, m('a'), COL.nat, 30, 'start', 700);
+    line(p, 'B, C, D = RFC4, RFC3, RFC2 ↔ γ/τ', 1090, 466, m('bcd'), COL.irr, 30, 'start', 700);
+    line(p, 'E = RFC5 ↔ δ′', 1090, 512, m('e'), COL.real, 30, 'start', 700);
+    line(p, 'по позиции в кольце, а не по названию', 800, 840, m('pair'), COL.dim, 28, 'middle', 600);
+    ln.forEach(l => pulse(l, m('pair'), 1.3));
+  }],
+
+  ['specs', 'Размеры и различия', (m) => {
+    const p = panel(0), r = rfc5(p, 390, 340, .3, { s: 1, pose: 'helix' }), pc = pcna3(p, 390, 650, null, { s: .8, tilt: .3 });
+    put(pc, { o: 0 }); pc.shade(null);
+    r.nm.forEach((n, i) => show(n, .6 + i * .1, .3));
+    show(r.col, m('big'), .5); show(r.ap, m('big'), .5);
+    const R = G(p), x0 = 760;
+    tw(r.sub[0], { s: 1.35 }, m('big'), .5); tw(r.sub[0], { s: 1 }, m('e', -.4), .5);
+    const br = pill(r, 'BRCT', COL.dim, -184, 185, m('big', 4), 22);
+    line(R, 'RFC1 ≈ 140 кДа', x0, 190, m('big'), COL.chalk, 38, 'start', 700);
+    line(R, 'своя АТФазная площадка — у δ её нет', x0, 240, m('big', 1.4), COL.dim, 28, 'start', 600);
+    line(R, 'A′-домен и BRCT-домен на конце цепи', x0, 290, m('big', 3.6), COL.dim, 28, 'start', 600);
+    tw(r.atp[4], { o: 1 }, m('e'), .4);
+    arrowTo(r, 240, 10, 330, 10, COL.dim, m('e', .4), true); const nx = crossX(r, 350, 10, .5, COL.dim); put(nx, { o: 0 }); show(nx, m('e', .8));
+    line(R, 'RFC5: центр связывает АТФ,', x0, 410, m('e'), COL.chalk, 30, 'start', 700);
+    line(R, 'но соседа с аргининовым пальцем нет', x0, 452, m('e', .4), COL.dim, 28, 'start', 600);
+    const ms = ['140', '40', '38', '37', '36'].map((v, i) => {
+      const t = T(r, v, { x: r.XS[i], y: 130, size: 30, fill: COL.int, weight: 700, anchor: 'middle', o: 0 }); show(t, m('sum', .2 + i * .35), .3); hide(t, m('chi', -.3), .3); return t;
+    });
+    hide(br, m('chi', -.3), .3);
+    colorLine(R, [['140 + 40 + 38 + 37 + 36 = '], ['291 кДа', COL.int]], x0, 540, m('sum', 2.2), { size: 40, anchor: 'start' });
+    colorLine(R, [['291 / 87 ≈ '], ['3,3', COL.int]], x0, 596, m('sum', 5.6), { size: 40, anchor: 'start' });
+    const d1 = G(R, { x: 900, y: 735, o: 0 }), d2 = G(R, { x: 1180, y: 735, o: 0 });
+    mk('circle', { r: 94, fill: mix(COL.board, PROT, .35), stroke: PROT, 'stroke-width': 3 }, d1); T(d1, 'RFC 291', { y: 10, size: 28, weight: 700, anchor: 'middle' });
+    mk('circle', { r: 51, fill: mix(COL.board, PROT, .35), stroke: PROT, 'stroke-width': 3 }, d2); T(d2, 'PCNA 87', { y: 10, size: 24, weight: 700, anchor: 'middle' });
+    show(d1, m('sum', 5.6), .5); show(d2, m('sum', 5.8), .5);
+    hide(R, m('chi', -.3), .4);
+    const X = G(p), ec = rfc5(X, 1170, 290, null, { s: .8, ec: true, bare: true }); put(ec, { o: 0 }); ec.nm.forEach(n => put(n, { o: 1 }));
+    show(ec, m('chi'), .5);
+    const cp = enzyme(X, 'χ ψ', 1170, 470, null, { w: 130, h: 56, size: 28 }); put(cp, { o: 0 }); show(cp, m('chi', 1));
+    const lk = path(X, 'M1170 442V400', { stroke: PROT, 'stroke-width': 5 }); put(lk, { o: 0 }); show(lk, m('chi', 1.4));
+    const sb = enzyme(X, 'SSB', 1400, 470, null, { w: 120, h: 56, size: 26 }); put(sb, { o: 0 }); show(sb, m('chi', 3));
+    const lk2 = path(X, 'M1235 470H1340', { stroke: PROT, 'stroke-width': 5 }); put(lk2, { o: 0 }); show(lk2, m('chi', 3));
+    line(X, 'в пентамер не входят', 1170, 540, m('chi', 1.6), COL.dim, 26, 'middle', 700);
+    const bx = path(X, 'M1100 470H780', { stroke: COL.dim, 'stroke-width': 5, 'stroke-dasharray': '10 9' }); put(bx, { o: 0 }); show(bx, m('chi', 7));
+    const cx = crossX(X, 740, 470, .6); put(cx, { o: 0 }); show(cx, m('chi', 7.4));
+    line(X, 'у эукариот им нет соответствия', 940, 530, m('chi', 7.4), COL.chalk, 28, 'middle', 700);
+    hide(X, m('key', -.3), .4);
+    // key: δ alone breaks the ring in E. coli; several RFC subunits hold PCNA
+    const K = G(p), ek = rfc5(K, 1170, 290, null, { s: .8, ec: true, bare: true }); put(ek, { o: 0 }); ek.nm.forEach(n => put(n, { o: 1 }));
+    show(ek, m('key'), .5); show(ek.halo[0], m('key', .4), .4); pulse(ek.sub[0], m('key', .4), 1.2);
+    line(K, 'δ — ключ, сам разрывает кольцо', 1170, 420, m('key', .4), COL.nat, 28, 'middle', 700);
+    show(pc, m('key', 2.5), .6);
+    [0, 1, 2, 3].forEach(i => {
+      const x = 390 + r.XS[i], dx = r.XS[i], y = 650 - 50 * Math.sqrt(Math.max(0, 1 - dx * dx / (209 * .8 * 209 * .8)));
+      const l = path(K, `M${x} 440L${x} ${y - 6}`, { stroke: PIPC, 'stroke-width': 5 }); put(l, { o: 0 }); show(l, m('key', 3 + i * .3), .4);
+    });
+    line(K, 'у RFC кольцо держат несколько субъединиц,', 1170, 600, m('key', 3), COL.chalk, 28, 'middle', 700);
+    line(K, 'а не одна RFC1', 1170, 644, m('key', 3.3), COL.dim, 26, 'middle', 600);
+  }],
+
+  ['q3', 'Быстрая проверка', () => {
+    const p = panel(0), r = rfc5(p, 800, 340, .3, { s: 1.1, bare: true, pose: 'helix' });
+    r.nm.forEach(n => put(n, { o: 1 })); r.ltr.forEach(l => put(l, { o: 1 }));
+    pill(p, 'бактерия: δ′', COL.real, 800, 130, .5, 32);
+    arrowTo(p, 800, 175, 800, 215, COL.dim, .7);
+    S.picks = r.XS.map((x, i) => ({ el: r.sub[i], box: [800 + x * 1.1 - 46, 340 + r.POSE.helix[i] * 1.1 - 46, 92, 92], label: ['RFC1', 'RFC4', 'RFC3', 'RFC2', 'RFC5'][i] }));
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-analog', prompt: ['Какая субъединица RFC — аналог δ′? Нажмите на неё.'],
+    build: pickEls(S.picks, 4, 'RFC5, позиция E: она соответствует δ′.',
+      i => i === 0 ? 'RFC1 — аналог δ.' : 'RFC4, RFC3 и RFC2 — аналоги γ/τ.'),
+  }], done) }],
+
+  ['five', 'Почему пять', (m) => {
+    const p = panel(0), hx = slotRing(p, 420, 360, 112, 46, null, 6), pn = slotRing(p, 1180, 360, 112, 46, null, 5);
+    pill(p, 'MCM, DnaB: шесть звеньев', COL.chalk, 420, 160, m('six'), 28); show(hx, m('six'), .6);
+    pill(p, 'RFC: пять звеньев', COL.chalk, 1180, 160, m('gone'), 28); show(pn, m('gone'), .6);
+    pulse(pn.empty, m('gone', 1.6), 1.15);
+    line(p, 'на месте шестого — щель', 1180, 560, m('gone', 1.6), COL.int, 28, 'middle', 700);
+    line(p, 'для стыка праймер — матрица (фаг T4)', 1180, 600, m('gone', 2), COL.dim, 26, 'middle', 600);
+    [['кишечная палочка', 400], ['фаг T4', 800], ['эукариоты', 1200]].forEach(([n, x], i) => {
+      const s = slotRing(p, x, 750, 56, 24, null, 5); show(s, m('same', .3 + i * .5), .5);
+      line(p, n, x, 868, m('same', .3 + i * .5), COL.chalk, 26, 'middle', 700);
+    });
+    pill(p, 'пентамер у всех трёх', OK, 800, 665, m('same', 2), 28);
+  }],
+
+  ['finger', 'Аргининовый палец', (m) => {
+    const p = panel(0), A = G(p, { x: 450, y: 450, o: 0 }), B = G(p, { x: 840, y: 450, o: 0 });
+    mk('circle', { r: 150, fill: SH[1], stroke: PROT, 'stroke-width': 4 }, A); mk('circle', { r: 150, fill: SH[3], stroke: PROT, 'stroke-width': 4 }, B);
+    T(A, 'субъединица n', { x: -10, y: 90, size: 26, fill: COL.dim, weight: 700, anchor: 'middle' }); T(B, 'сосед n + 1', { x: 30, y: 90, size: 26, fill: COL.dim, weight: 700, anchor: 'middle' });
+    show(A, .3); show(B, .3);
+    // ATP on the border (held by the left subunit)
+    const atp = G(p, { x: 560, y: 440, o: 0 });
+    [-30, 0, 30].forEach(dx => mk('circle', { cx: dx, cy: 0, r: 13, fill: COL.int }, atp));
+    mk('rect', { x: -70, y: -4, width: 40, height: 8, rx: 4, fill: DNA }, atp);
+    show(atp, m('atp'), .5); line(p, 'АТФ', 560, 405, m('atp', .2), COL.int, 28, 'middle', 700);
+    line(p, 'на границе двух соседних субъединиц', 640, 740, m('atp', .5), COL.chalk, 28, 'middle', 700);
+    // the finger of the neighbour
+    const fg = G(B, { o: 0 });
+    mk('rect', { x: -250, y: -14, width: 150, height: 28, rx: 14, fill: mix(COL.board, PROT, .55), stroke: PROT, 'stroke-width': 3 }, fg);
+    T(fg, 'Arg', { x: -175, y: 8, size: 22, fill: COL.chalk, weight: 700, anchor: 'middle' });
+    show(fg, m('arg'), .5);
+    line(p, 'аргининовый палец соседа', 640, 248, m('arg'), PROT, 28, 'middle', 700);
+    pulse(fg, m('arg', 2.2), 1.1);
+    line(p, 'нужен для гидролиза', 640, 284, m('arg', .4), COL.dim, 26, 'middle', 600);
+    // neighbours move
+    tw(B, { x: 800 }, m('nb', 1), .8); tw(fg, { x: 40 }, m('nb', 1), .8);
+    tw(B, { x: 840 }, m('nb', 3.5), .8); tw(fg, { x: 0 }, m('nb', 3.5), .8);
+    line(p, 'соседи сдвигаются, когда садятся PCNA и ДНК', 640, 790, m('nb'), COL.int, 28, 'middle', 700);
+    // the switch
+    const sw = onOff(p, 1330, 400, null); put(sw, { o: 0 }); show(sw, m('sw'), .5);
+    sw.set(true, m('sw', 5.6), .6);
+    [['PCNA захвачен', 480], ['ДНК вошла', 540]].forEach(([s, y], i) => {
+      line(p, s, 1190, y + 8, m('sw', .6), COL.chalk, 28, 'start', 700);
+      const nx = yesNo(p, false, 1500, y, m('sw', .6), 1); hide(nx, m('sw', 5.4 + i * .3), .2); yesNo(p, true, 1500, y, m('sw', 5.4 + i * .3), 1);
+    });
+    const off = line(p, 'активность подавлена', 1330, 330, m('sw'), NO, 26, 'middle', 700); hide(off, m('sw', 5.4), .3);
+    line(p, 'оба условия — гидролиз включён', 1330, 640, m('sw', 5.8), OK, 26, 'middle', 700);
+  }],
+
+  ['collar', 'Воротник', (m) => {
+    const p = panel(0), r = rfc5(p, 560, 450, .3, { s: 1.3, pose: 'helix' }), c = pcna3(p, 560, 710, null, { s: 1.05, tilt: .3 });
+    c.shade(null); put(c, { o: 0 }); show(c, .6, .5);
+    r.nm.forEach((n, i) => show(n, .6 + i * .1, .3));
+    show(r.col, .6, .6);
+    line(p, 'воротник', 1000, 300, .8, OK, 36, 'start', 700);
+    line(p, 'кольцо из концевых доменов,', 1000, 346, 1, COL.dim, 28, 'start', 600);
+    line(p, 'скрепляет все пять субъединиц сверху', 1000, 384, 1.2, COL.dim, 28, 'start', 600);
+    show(r.ap, m('ap'), .5); pulse(r.ap, m('ap'), 1.03);
+    line(p, 'A′-домен RFC1 замыкает воротник на RFC5', 1000, 470, m('ap'), OK, 28, 'start', 700);
+    c.open(m('stay'), 1.2, 28);
+    pulse(r.col, m('stay', 1.2), 1.03);
+    line(p, 'кольцо PCNA раскрывается,', 1000, 560, m('stay'), COL.chalk, 28, 'start', 700);
+    line(p, 'воротник остаётся замкнутым', 1000, 600, m('stay', .3), OK, 28, 'start', 700);
+    show(r.gate, m('where'), .5); r.gateOpen(true, m('where'), .8);
+    line(p, 'щель — в слое AAA+, а не в воротнике', 1000, 690, m('where'), COL.int, 28, 'start', 700);
+  }],
+
+  ['rlc', 'RLC: RFC-подобные комплексы', (m) => {
+    const p = panel(0), r = rfc5(p, 450, 440, .3, { s: 1.15, bare: true });
+    r.nm.forEach((n, i) => show(n, .6 + i * .1, .3));
+    pill(p, 'RLC — класс RFC-подобных комплексов', PROT, 800, 150, m('class'), 32);
+    r.halo.forEach((h, i) => { if (i) { put(h, { c_stroke: COL.dim }); show(h, m('same'), .4); } });
+    show(r.halo[0], m('same', 1), .4); put(r.halo[0], { c_stroke: COL.int });
+    hBracket(p, 450 - 92 * 1.15 - 50, 450 + 184 * 1.15 + 50, 565, 'общая заготовка RFC2–5', COL.chalk, m('same'), { up: false });
+    line(p, 'сменная', 450 - 184 * 1.15, 365, m('same', 1), COL.int, 26, 'middle', 700);
+    const swapTo = (str, col, t) => { swap(r.nm[0], str, t); tw(r.sub[0].c, { c_fill: mix(COL.board, col, .5) }, t, .4); pulse(r.sub[0], t, 1.2); };
+    const card = (i, t, name, note, col) => {
+      const y = 250 + i * 190, c = G(p, { o: 0 });
+      mk('rect', { x: 900, y, width: 620, height: 160, rx: 22, fill: CARD, stroke: col, 'stroke-width': 3 }, c);
+      T(c, name, { x: 1060, y: y + 52, size: 32, fill: col, weight: 700 });
+      note.forEach((s, k) => T(c, s, { x: 1060, y: y + 94 + k * 34, size: 24, fill: COL.dim, weight: 600 }));
+      show(c, t, .5);
+      return { c, y };
+    };
+    // ctf18
+    swapTo('Ctf18', COL.irr, m('ctf'));
+    const a = card(0, m('ctf'), 'Ctf18-RFC', ['сцепление сестринских хроматид', 'связан с Pol ε'], COL.irr);
+    const pc1 = pcna3(p, 970, a.y + 80, null, { s: .17 }); put(pc1, { o: 0 }); pc1.shade(null); show(pc1, m('ctf', .4));
+    // elg1
+    swapTo('Elg1', COL.nat, m('elg'));
+    const b = card(1, m('elg'), 'Elg1-RFC (ATAD5)', ['снимает PCNA с ДНК'], COL.nat);
+    const pc2 = pcna3(p, 970, b.y + 80, null, { s: .17 }); put(pc2, { o: 0 }); pc2.shade(null); show(pc2, m('elg', .4));
+    arrowTo(p, 1020, b.y + 80, 1050, b.y + 80, COL.nat, m('elg', 1));
+    // rad24
+    swapTo('Rad24', COL.real, m('rad'));
+    const c = card(2, m('rad'), 'Rad24-RFC (RAD17)', ['загружает зажим 9-1-1'], COL.real);
+    const pc3 = pcna3(p, 970, c.y + 80, null, { s: .17, cols: [COL.nat, COL.real, COL.irr] }); put(pc3, { o: 0 }); pc3.shade(null); show(pc3, m('rad', .4));
+  }],
+
+  ['nine', 'Зажим 9-1-1', (m) => {
+    const p = panel(0), X = 400, Y = 460, K = .85, g = pcna3(p, X, Y, .3, { s: K, cols: [COL.nat, COL.real, COL.irr] });
+    g.shade(null);
+    [['Rad9', -30], ['Hus1', 90], ['Rad1', 210]].forEach(([n, a], i) => {
+      const R = 209 * K + 54, x = X + R * Math.cos(a * Math.PI / 180), y = Y + R * Math.sin(a * Math.PI / 180) + 10;
+      line(p, n, x, y, m('trio', .3 + i * .4), [COL.nat, COL.real, COL.irr][i], 30, 'middle', 700);
+    });
+    pill(p, 'тример из трёх разных белков', PROT, X, 135, m('trio'), 28);
+    const cp = G(p, { x: 1130, y: 190, o: 0 });
+    mk('circle', { r: 36, fill: 'none', stroke: COL.int, 'stroke-width': 6 }, cp); path(cp, 'M-24 0H24', { stroke: COL.int, 'stroke-width': 8 });
+    show(cp, m('cp'), .5); const cpl = pill(p, 'включает контрольную точку', COL.int, 1130, 270, m('cp', .3), 28);
+    // the two junctions
+    const J = G(p);
+    const jn = (y, lab, kind, t) => {
+      const q = G(J, { o: 0 });
+      path(q, `M820 ${y}H1500`, { stroke: COL.chalk, 'stroke-width': 7 });
+      if (kind === 3) { path(q, `M820 ${y - 14}H1060`, { stroke: DNA, 'stroke-width': 7 }); T(q, '3′', { x: 1075, y: y - 8, size: 28, fill: DNA, weight: 700 }); }
+      else { path(q, `M1180 ${y - 14}H1500`, { stroke: DNA, 'stroke-width': 7 }); T(q, '5′', { x: 1148, y: y - 8, size: 28, fill: DNA, weight: 700 }); }
+      const e = enzyme(q, lab, 1120, y - 80, null, { w: 190, h: 56, size: 26 });
+      path(q, `M1120 ${y - 52}V${y - 24}`, { stroke: PROT, 'stroke-width': 5 });
+      T(q, kind === 3 ? 'стык с 3′-концом праймера' : 'стык с утопленным 5′-концом', { x: 1160, y: y + 50, size: 26, fill: COL.dim, weight: 600, anchor: 'middle' });
+      show(q, t, .5);
+      return q;
+    };
+    jn(470, 'RFC', 3, m('stick')); jn(660, 'Rad24-RFC', 5, m('stick', 2.4));
+    hide(J, m('note', -.3), .5);
+    hide(cp, m('note', -.3), .4); hide(cpl, m('note', -.3), .4);
+    const N = G(p);
+    strip(N, 780, 650, 720, 64, mix(COL.board, PROT, .45), 0); const bar = N.lastChild; put(bar, { o: 0 });
+    show(bar, m('note'), .5); bar.setAttribute('stroke', PROT); bar.setAttribute('stroke-width', 3);
+    line(N, 'общий набор RFC2–5', 1140, 692, m('note'), COL.chalk, 30, 'middle', 700);
+    arrowTo(N, 1140, 640, 1140, 580, COL.dim, m('note', 1.6));
+    line(N, 'одна заготовка — четыре функции', 1140, 220, m('note', 1.6), COL.chalk, 32, 'middle', 700);
+    ['загрузка PCNA', 'сцепление хроматид', 'выгрузка PCNA', 'загрузка 9-1-1'].forEach((s, i) => {
+      pill(N, s, [PROT, COL.irr, COL.nat, COL.real][i], 940 + (i % 2) * 400, 330 + Math.floor(i / 2) * 120, m('note', 2.4 + i * .7), 30);
+    });
+  }],
+
+  ['q4', 'Быстрая проверка', () => {
+    const p = panel(0), names = ['RFC', 'Ctf18-RFC', 'Elg1-RFC', 'Rad24-RFC'], cols = [PROT, COL.irr, COL.nat, COL.real];
+    const CX = i => 640 + i * 150;
+    S.picks = [];
+    for (let i = 0; i < 5; i++) {
+      const col = G(p);
+      for (let k = 0; k < 4; k++) mk('circle', { cx: CX(i), cy: 210 + k * 110, r: 38, fill: i === 0 ? mix(COL.board, cols[k], .5) : SH[1 + (i % 2) * 2], stroke: i === 0 ? cols[k] : PROT, 'stroke-width': 3 }, col);
+      T(p, 'ABCDE'[i], { x: CX(i), y: 140, size: 36, weight: 700, anchor: 'middle', o: 1 });
+      S.picks.push({ el: col, box: [CX(i) - 54, 156, 108, 450], label: 'позиция ' + 'ABCDE'[i] });
+    }
+    names.forEach((n, k) => T(p, n, { x: 540, y: 222 + k * 110, size: 28, fill: cols[k], weight: 700, anchor: 'end' }));
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-rlc', prompt: ['Какую субъединицу RFC заменяют своим белком во всех RLC? Нажмите на неё.'],
+    build: pickEls(S.picks, 0, 'RFC1 (позиция A): у RLC на её месте Ctf18, Elg1 или Rad24.',
+      () => 'Эта субъединица общая: RFC2–5 одинаковы во всех RLC.'),
+  }], done) }],
+
+  ['atp', 'Шаг 1: АТФ', (m) => {
+    const p = panel(0), c = cues('atp'), a = rfc5(p, 440, 420, .3, { s: 1.1 }), b = rfc5(p, 1140, 420, null, { s: 1.1, pose: 'twist' }), pc = pcna3(p, 440, 700, null, { s: .75, tilt: .3 });
+    stepBar(p, 0, .3);
+    put(b, { o: 0 }); put(pc, { o: 0 }); pc.shade(null);
+    a.nm.forEach((n, i) => show(n, .6 + i * .1, .3)); b.nm.forEach(n => put(n, { o: 1 }));
+    show(pc, c[1], .5);
+    line(p, 'с АТФ', 440, 230, m('s1'), OK, 34, 'middle', 700);
+    [0, 1, 2, 3].forEach(i => { put(a.atp[i], { s: .3 }); tw(a.atp[i], { o: 1, s: 1 }, m('s1', 1.8 + i * .5), .4, back); });
+    const t1 = line(p, 'рабочие центры: RFC1, 4, 3, 2', 440, 800, m('s1', 4.4), COL.chalk, 28, 'middle', 700);
+    const t2 = line(p, 'у RFC5 соседа с пальцем нет', 440, 840, m('s1', 6.8), COL.dim, 26, 'middle', 600);
+    hide(t1, m('helix', -.3), .3); hide(t2, m('helix', -.3), .3);
+    a.pose('helix', m('helix'), 1.4);
+    show(b, m('helix'), .6); tw(b, { o: .45 }, m('helix') + .6, .4);
+    line(p, 'без АТФ', 1140, 230, m('helix'), NO, 34, 'middle', 700);
+    line(p, 'с АТФ: правая спираль, подходит к PCNA', 440, 820, m('helix'), OK, 28, 'middle', 700);
+    line(p, 'без АТФ: перекручена, ДНК не связывает', 1140, 620, m('helix', 4.4), COL.chalk, 28, 'middle', 700);
+  }],
+
+  ['ring', 'Шаг 2: захват и раскрытие', (m) => {
+    const p = panel(0), r = rfc5(p, 420, 240, .3, { s: .85, pose: 'helix' }), pc = pcna3(p, 420, 570, .3, { s: .8, tilt: .3 }), e = pcna3(p, 1180, 400, .3, { s: .75 });
+    stepBar(p, 1, .3);
+    pc.shade(null); e.shade(null);
+    r.nm.forEach((n, i) => show(n, .6 + i * .1, .3));
+    tw(r, { y: 330 }, m('s2', 1), 1.2);
+    [[1, 2], [2, 1], [3, 0]].forEach(([i, k], j) => {
+      const x = 420 + r.XS[i] * .85, pk = pc.pkPt[k], px = 420 + .8 * pk[0], py = 570 + .8 * .3 * pk[1];
+      const l = path(p, `M${x} ${330 + (r.POSE.helix[i] + 36) * .85}L${px} ${py - 6}`, { stroke: PIPC, 'stroke-width': 5 }); put(l, { o: 0 }); show(l, m('s2', 2.4 + j * .3), .4);
+    });
+    pc.open(m('s2', 3.4), 1.2, 26); e.open(m('s2', 3.4), 1.2, 26);
+    show(e.bd[0], m('s2', 3.8), .4);
+    line(p, 'RFC садится на лицевую сторону PCNA', 420, 700, m('s2', 1), COL.chalk, 28, 'middle', 700);
+    const RT = G(p);
+    line(RT, 'одна из трёх границ расходится', 1180, 660, m('s2', 3.6), COL.int, 28, 'middle', 700);
+    const ar = G(RT, { x: 1180, y: 400, o: 0 });
+    path(ar, 'M-136 -95A165 165 0 0 0 -128 105', { stroke: COL.chalk, 'stroke-width': 5 });
+    show(ar, m('turn'), .5);
+    line(RT, 'домены целые: поворачивается субъединица', 1180, 705, m('turn'), COL.chalk, 28, 'middle', 700);
+    hide(e, m('form', -.1), .4); hide(RT, m('form', -.1), .4);
+    const f1 = pcna3(p, 1020, 400, null, { s: .42, tilt: .55 }), f2 = pcna3(p, 1370, 400, null, { s: .42 });
+    f1.shade(null); f2.shade(null); put(f1, { o: 0 }); put(f2, { o: 0 });
+    show(f1, m('form'), .5); show(f2, m('form', .6), .5);
+    f1.open(m('form') + .6, .8, 14); tw(f1.sub[2], { y: f1.sub[2]._st.y - 30 }, m('form') + .6, .8);
+    f2.open(m('form', .6) + .6, .8, 40);
+    line(p, 'правая спираль,', 1020, 600, m('form', .8), COL.chalk, 26, 'middle', 700); line(p, 'узкая щель', 1020, 636, m('form', .8), COL.dim, 24, 'middle', 600);
+    line(p, 'почти плоское,', 1370, 600, m('form', 1.2), COL.chalk, 26, 'middle', 700); line(p, 'щель ≈ 20 Å', 1370, 636, m('form', 1.2), COL.dim, 24, 'middle', 600);
+    line(p, 'возможно, последовательные состояния', 1195, 710, m('form', 5), COL.dim, 26, 'middle', 600);
+    line(p, 'три контакта RFC–PCNA, а не один', 420, 750, m('hold'), PIPC, 28, 'middle', 700);
+    line(p, 'в спиральной форме: шаг кольца = шаг спирали ДНК', 420, 795, m('hold', 2.4), COL.chalk, 28, 'middle', 700);
+  }],
+
+  ['gate', 'Шаг 3: A-gate', (m) => {
+    const p = panel(0), r = rfc5(p, 640, 440, .3, { s: 1.3, pose: 'helix' }), pc = pcna3(p, 640, 720, null, { s: 1.0, tilt: .3 });
+    stepBar(p, 2, .3);
+    pc.shade(null); put(pc, { o: 0 }); show(pc, .3, .5); pc.open(.4, .1, 26);
+    r.nm.forEach((n, i) => show(n, .6 + i * .1, .3)); show(r.col, .6, .5);
+    show(r.gate, m('between'), .5); r.gateOpen(true, m('between'), .8); pulse(r.gate, m('between', .3), 1.04);
+    show(r.ap, m('between', 2.2), .5);
+    line(p, 'A-gate: вход между модулем RFC1', 1030, 300, m('between'), COL.int, 28, 'start', 700);
+    line(p, 'и его A′-доменом', 1030, 338, m('between', .2), COL.int, 28, 'start', 700);
+    line(p, 'A′ пристёгнут к RFC5,', 1030, 420, m('between', 2.2), OK, 28, 'start', 700);
+    line(p, 'поэтому воротник замкнут', 1030, 458, m('between', 2.4), OK, 28, 'start', 700);
+    const d = G(p, { x: 0, y: 0, o: 0 }), gy = 440 + 6 * 1.3;
+    duoLines(d, 120, 480, gy + 8);
+    show(d, m('in'), .4); tw(d, { x: 100 }, m('in'), 1.2);
+    line(p, 'ДНК входит сбоку', 300, 250, m('in'), COL.chalk, 30, 'middle', 700);
+    arrowTo(p, 300, 270, 300, gy - 40, COL.chalk, m('in'));
+  }],
+
+  ['junction', 'Шаги 4 и 5: стык и уход', (m) => {
+    const p = panel(0), c = cues('junction'), CXo = 640, CY = 430;
+    const sb3 = stepBar(p, 3, .3);
+    // DNA behind the loader, the ring in front of it
+    const dn = G(p, { o: 0 }); path(dn, `M${CXo + 7} 790V150`, { stroke: COL.chalk, 'stroke-width': 7 }); path(dn, `M${CXo - 7} 790V${CY - 48 * 1.2 + 4}`, { stroke: DNA, 'stroke-width': 7 });
+    const r = rfc5(p, CXo, CY, .3, { s: 1.2, pose: 'helix' });
+    const pc = pcna3(p, CXo, 700, null, { s: .9, tilt: .3 }); pc.shade(null); put(pc, { o: 0 }); show(pc, .3, .5);
+    r.nm.forEach((n, i) => show(n, .6 + i * .1, .3)); show(r.col, .6, .5); show(r.ap, .6, .5);
+    show(dn, c[1], .6);
+    line(p, '3′', CXo - 40, CY - 48 * 1.2 + 24, c[1] + 1.4, DNA, 28, 'middle', 700);
+    line(p, 'одиночная матрица — наружу', 960, 190, c[1] + 2.4, COL.chalk, 28, 'start', 700);
+    line(p, '3′-конец праймера упирается в воротник', 960, 372, c[1] + 1.4, DNA, 28, 'start', 700);
+    const hy = pill(p, 'АТФ → АДФ + Фн', COL.int, 1180, 540, c[2], 30);
+    [0, 1, 2, 3].forEach(i => { tw(r.atp[i], { o: 1 }, c[2], .3); pulse(r.atp[i], c[2], 1.6); tw(r.atp[i], { o: 0 }, c[2] + 1.4, .4); });
+    const hl = line(p, 'только такой стык запускает гидролиз', 1180, 600, c[2] + .3, COL.dim, 26, 'middle', 600);
+    // step 5: the loader leaves
+    hide(hy, m('s5'), .4); hide(hl, m('s5'), .4);
+    stepBar(p, 4, m('s5')); hide(sb3, m('s5'), .3);
+    tw(r, { y: CY - 190, o: .35 }, m('s5', 1), 1.2);
+    pc.close(m('s5', 1), .5);
+    line(p, 'PCNA остаётся на ДНК', 1180, 690, m('s5', 1.6), OK, 32, 'middle', 700);
+    // site 2
+    const q = G(p, { o: 0 });
+    path(q, 'M1120 830H1500', { stroke: COL.chalk, 'stroke-width': 7 }); path(q, 'M1280 816H1500', { stroke: DNA, 'stroke-width': 7 });
+    T(q, '5′', { x: 1262, y: 800, size: 26, fill: DNA, weight: 700, anchor: 'middle' });
+    show(q, m('site2'), .5);
+    pill(p, 'второй участок RFC1', PROT, 1180, 770, m('site2'), 24);
+    line(p, 'держит утопленный 5′-конец', 1320, 875, m('site2', .5), COL.dim, 24, 'middle', 600);
+  }],
+
+  ['q5', 'Быстрая проверка', () => {
+    const p = panel(0), K = 1.4, X = 800, Y = 330, r = rfc5(p, X, Y, .3, { s: K, pose: 'helix' }), pc = pcna3(p, X, 580, null, { s: .9, tilt: .3 });
+    pc.shade(null); pc.open(.3, .1, 26); put(pc, { o: 0 }); show(pc, .3, .4);
+    r.nm.forEach(n => put(n, { o: 1 })); put(r.col, { o: 1 }); put(r.ap, { o: 1 });
+    line(p, 'воротник', X + 184 * K + 70, Y - 64 * K, .5, OK, 28, 'start', 700);
+    line(p, 'A′-домен', X - 184 * K - 70, Y - 64 * K, .5, OK, 28, 'end', 700);
+    S.picks = [
+      { el: r.col, box: [X - 92 * K - 46, Y - 80 * K - 2, 92 * K + 184 * K + 92, 32 * K + 4], label: 'воротник' },
+      { el: r.sub[0], box: [X - 184 * K - 60, Y - 46 * K, 120, 46 * K + 20 * K], label: 'щель между модулем RFC1 и A′' },
+      { el: r.ap, box: [X - 184 * K - 60, Y - 84 * K, 120, 40 * K], label: 'A′-домен' },
+    ];
+  }, { ask: done => quiz(BAND, [{
+    id: 'c-gate', prompt: ['Загрузчик держит раскрытое кольцо. Где ДНК войдёт в камеру? Нажмите на это место.'],
+    build: pickEls(S.picks, 1, 'ДНК входит через A-gate: щель между модулем RFC1 и его A′-доменом.',
+      i => i === 0 ? 'Воротник замкнут, ДНК через него не входит.' : 'A′-домен остаётся пристёгнут к RFC5; вход — между ним и модулем RFC1.'),
+  }], done) }],
+
+  ['bact', 'Отличие от бактерий', (m) => {
+    const p = panel(0), b = betaRing(p, 430, 380, .3, { s: .6 }), e = pcna3(p, 1170, 380, .3, { s: .6 });
+    e.shade(null);
+    pill(p, 'кишечная палочка', COL.chalk, 430, 150, .5, 28); pill(p, 'эукариоты', COL.chalk, 1170, 150, .5, 28);
+    const d = enzyme(p, 'δ', 580, 240, null, { w: 80, h: 56, size: 30 }); put(d, { o: 0 }); show(d, m('ecoli')); tw(d, { x: 520, y: 285 }, m('ecoli', .4), .6);
+    b.open(m('ecoli', 1.2), .9, 26); betaBd(b); show(b.bd[0], m('ecoli', 1.4), .4);
+    line(p, 'одна δ рвёт одну из двух границ', 430, 590, m('ecoli', 1.6), COL.chalk, 26, 'middle', 700);
+    [[-30, 0], [90, 1], [210, 2]].forEach(([a, k], i) => {
+      const R = 209 * .6 + 46, x = 1170 + R * Math.cos(a * Math.PI / 180), y = 380 + R * Math.sin(a * Math.PI / 180);
+      const q = enzyme(p, 'RFC', x, y, null, { w: 76, h: 44, size: 22 }); put(q, { o: 0 }); show(q, m('euk', .3 + i * .3));
+    });
+    e.open(m('euk', 1.4), .9, 26); show(e.bd[0], m('euk', 1.6), .4);
+    line(p, 'все субъединицы RFC держат кольцо, границ три', 1170, 620, m('euk', 1.6), COL.chalk, 26, 'middle', 700);
+    const cl = line(p, 'β разворачивает домен, а PCNA нет', 800, 710, m('claim'), COL.dim, 30, 'middle', 700);
+    const st = path(p, 'M520 702H1080', { stroke: NO, 'stroke-width': 5 }, { d: 0 }); draw(st, m('claim', 2.4), .6);
+    line(p, 'в обоих случаях рвётся одна граница', 800, 760, m('claim', 3), OK, 30, 'middle', 700);
+    line(p, '2 или 3 границы · одна δ или все субъединицы RFC', 800, 815, m('diff'), COL.int, 30, 'middle', 700);
+    pill(p, 'дальше — глава 15', PROT, 800, 868, m('next'), 28);
+  }],
+
+  ['wrap', 'Итоги', (m) => {
+    numbered(panel(0), [
+      ['PCNA: 3 × 2 = 6 доменов, три границы, PIP-бокс и три кармана', 'w1'],
+      ['RFC: пять разных субъединиц A–E, шестого звена нет', 'w2'],
+      ['RLC: общие RFC2–5 и сменная первая — Ctf18, Elg1, Rad24', 'w3'],
+      ['раскрытие: АТФ → захват → A-gate → стык и гидролиз → уход', 'w4'],
+    ], m, 220, 150, 34);
+  }],
+
+  ['final1', 'Практика главы', () => { panel(0); }, { ask: done => quiz(SCREEN, [{ id: 'p-num', prompt: ['Впишите числа.'], build: blanks(P_NUM) }], done, 'Практика главы   1 из 5') }],
+  ['final2', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{ id: 'p-tf', prompt: ['Верно или неверно?'], build: grid(P_TF, TF, { multi: false, text: true }) }], done, 'Практика главы   2 из 5') }],
+  ['final3', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{ id: 'p-an', prompt: ['Какой аналог у E. coli у субъединицы RFC? Отнесите их.'], build: grid(P_AN, ACOLS, { multi: false, text: true }) }], done, 'Практика главы   3 из 5') }],
+  ['final4', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{ id: 'p-rlc', prompt: ['Три загрузчика, три функции. Отнесите свойства к своему комплексу.'], build: grid(P_RLC, RCOLS, { multi: false, text: true }) }], done, 'Практика главы   4 из 5') }],
+  ['final5', 'Практика главы', () => {}, { ask: done => quiz(SCREEN, [{ id: 'p-ord', prompt: ['Расставьте шаги раскрытия и загрузки PCNA по порядку.'], build: grid(P_ORD, NCOLS, { multi: false, text: true }) }], done, 'Практика главы   5 из 5') }],
+  ['finish', 'Готово', () => {}, { ask: finishCard }],
+].map(([id, title, run, extra]) => ({ id, title, run, ...extra }));
+
+/* ---------- question data ---------- */
+const P_NUM = [
+  { parts: ['Фрагментов в геноме (6,4·10⁹ / 150), в 10⁷: ', { box: '4,3' }], test: v => v[0] >= 4.2 && v[0] <= 4.4, why: '6,4·10⁹ / 150 ≈ 4,3·10⁷: столько колец надо надеть.', hint: 'Геном разделите на длину фрагмента.' },
+  { parts: ['Доменов в PCNA: 3 × 2 = ', { box: '6' }], why: 'Три субъединицы по два домена — шесть, как у β₂ (2 × 3).', hint: 'Три субъединицы, в каждой два домена.' },
+  { parts: ['Зазор с каждой стороны: (35 − 20) / 2 = ', { box: '7,5' }, ' Å'], why: '(35 − 20) / 2 = 7,5 Å.', hint: 'Разность делится пополам: зазор есть с двух сторон.' },
+  { parts: ['α-спиралей выстилки: 6 × 2 = ', { box: '12' }], why: 'По две спирали на каждый из шести доменов.', hint: 'Шесть доменов, по две спирали на домен.' },
+  { parts: ['Масса RFC: 140 + 40 + 38 + 37 + 36 = ', { box: '291' }, ' кДа'], why: '140 + 40 + 38 + 37 + 36 = 291 кДа.', hint: 'Сложите массы пяти субъединиц.' },
+  { parts: ['RFC тяжелее PCNA в 291 / 87 ≈ ', { box: '3,3' }, ' раза'], test: v => v[0] >= 3.2 && v[0] <= 3.4, why: '291 / 87 ≈ 3,3.', hint: 'Массу RFC разделите на массу кольца PCNA.' },
+];
+const P_TF = [
+  { parts: ['На PCNA шесть карманов для PIP-бокса.'], ans: ['f'], why: 'Карманов три, по одному на субъединицу; шесть — это домены.' },
+  { parts: ['У PCNA две границы между субъединицами.'], ans: ['f'], why: 'Три: у кольца из трёх субъединиц три границы. Две — у β₂.' },
+  { parts: ['PCNA сам садится на ДНК.'], ans: ['f'], why: 'Это замкнутое кольцо: ему нужен загрузчик RFC.' },
+  { parts: ['У Pol α надёжно показан PIP-бокс.'], ans: ['f'], why: 'Надёжного PIP-бокса, связывающего PCNA, для неё показать не удалось.' },
+  { parts: ['RFC5 в позиции E — аналог δ′.'], ans: ['t'], why: 'Позиция E (RFC5) соответствует δ′.' },
+  { parts: ['RLC — название одного комплекса.'], ans: ['f'], why: 'Это класс: Ctf18-RFC, Elg1-RFC, Rad24-RFC и другие.' },
+  { parts: ['Воротник RFC открывается вместе с кольцом PCNA.'], ans: ['f'], why: 'Воротник замкнут; щель — A-gate в слое AAA+.' },
+  { parts: ['Зажим 9-1-1 — это Rad17–Rad9–Hus1.'], ans: ['f'], why: 'Это Rad9–Hus1–Rad1; Rad17 (Rad24) входит в загрузчик.' },
+];
+const ACOLS = [['d', 'δ', null, '1'], ['g', 'γ/τ', null, '2'], ['p', 'δ′', null, '3']];
+const P_AN = [['RFC1', 'd'], ['RFC2', 'g'], ['RFC3', 'g'], ['RFC4', 'g'], ['RFC5', 'p']]
+  .map(([n, a]) => ({ parts: [n], ans: [a], why: `${n}: ${a === 'd' ? 'позиция A, аналог δ' : a === 'p' ? 'позиция E, аналог δ′' : 'позиции B–D, аналог γ/τ'}.` }));
+const RCOLS = [['c', 'Ctf18-RFC', null, '1'], ['e', 'Elg1-RFC', null, '2'], ['r', 'Rad24-RFC', null, '3']];
+const P_RLC = [['Нужен для сцепления сестринских хроматид', 'c'], ['У человека — ATAD5', 'e'], ['Загружает 9-1-1', 'r'], ['Снимает PCNA с ДНК', 'e'], ['Связан с Pol ε', 'c'], ['Предпочитает стык с утопленным 5′-концом', 'r']]
+  .map(([s, a]) => ({ parts: [s], ans: [a], why: { c: 'Ctf18-RFC: сцепление хроматид, связь с Pol ε.', e: 'Elg1-RFC (ATAD5): выгрузчик PCNA.', r: 'Rad24-RFC (RAD17): загружает 9-1-1, любит стык с утопленным 5′-концом.' }[a] }));
+const NCOLS = [1, 2, 3, 4, 5].map(i => [String(i), `${i}-й`, null, String(i)]);
+const P_ORD = [
+  { parts: ['Стык праймер–матрица запускает гидролиз'], ans: ['4'], why: 'Только такой стык запускает гидролиз.' },
+  { parts: ['RFC уходит, PCNA остаётся на ДНК'], ans: ['5'], why: 'После гидролиза загрузчик уходит, а кольцо остаётся.' },
+  { parts: ['RFC садится на PCNA и разрывает одну границу'], ans: ['2'], why: 'Захват и раскрытие: одна из трёх границ расходится.' },
+  { parts: ['RFC связывает АТФ'], ans: ['1'], why: 'С АТФ модули принимают форму правой спирали, подходящую к PCNA.' },
+  { parts: ['Открывается A-gate, ДНК входит сбоку'], ans: ['3'], why: 'Вход — между модулем RFC1 и его A′-доменом; воротник замкнут.' },
+];
+boot();
+</script>
+</body>
+</html>
